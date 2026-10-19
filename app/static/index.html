@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ORION — Surgical Co-Pilot</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #f8fafc;
+      color: #0f172a;
+      font-family: 'Poppins', sans-serif;
+      height: 100vh;
+      display: flex;
+      gap: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    /* ── Left area: video pane + tiles column ── */
+    #display-area {
+      flex: 1;
+      display: flex;
+      flex-direction: row;
+      background: #000;
+      border-radius: 0;
+      overflow: hidden;
+      border-right: 0px solid rgba(0, 0, 0, 0.18);
+    }
+
+    /* Video fills the left portion of display-area */
+    #video-pane {
+      flex: 1;
+      position: relative;
+      min-width: 0;
+    }
+
+    #surgical-video {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      z-index: 0;
+    }
+
+    /* ── Tile column: context panels slide in from the right ── */
+    #tiles-column {
+      flex: 0 0 0%;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      padding: 0;
+      background: #f8fafc;
+      /* No transition — column expands/collapses instantly so canvas        dimensions are valid on the very next rAF after tile is shown.       Visual polish comes from the per-tile tile-in animation instead. */
+    }
+
+    #tiles-column.has-tiles {
+      flex-basis: 40%;
+      padding: 8px;
+      gap: 8px;
+    }
+
+    /* Individual tile panel */
+    .tile-panel {
+      display: none;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      border-radius: 0;
+      background: #ffffff;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      box-shadow: none;
+      overflow: hidden;
+    }
+
+    .tile-panel.visible {
+      display: flex;
+      animation: tile-in 0.28s ease forwards;
+    }
+
+    @keyframes tile-in {
+      from { opacity: 0; transform: translateX(10px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    .modal-title {
+      flex-shrink: 0;
+      padding: 10px 14px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #475569;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    }
+
+    .modal-body {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* CT and AR canvases fill their modal body */
+    #ct-canvas, #ar-canvas {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      display: block;
+    }
+
+    /* ── Right 15%: three floating glass cards ── */
+    #right-panel {
+      flex: 0 0 15%;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      min-width: 160px;
+      background: #ffffff;
+    }
+
+    /* Shared glass card style */
+    .side-card {
+      border-radius: 0;
+      background: #ffffff;
+      border: none;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      box-shadow: none;
+      overflow: hidden;
+    }
+
+    .card-label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #0f172a;
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .card-label .card-toggle {
+      font-size: 14px;
+      color: #94a3b8;
+      transition: transform 0.2s ease;
+      flex-shrink: 0;
+    }
+
+    .side-card.collapsed .card-label .card-toggle {
+      transform: rotate(-90deg);
+    }
+
+    .card-body {
+      overflow: hidden;
+      max-height: 2000px;
+      transition: max-height 0.3s ease;
+    }
+
+    .side-card.collapsed .card-body {
+      max-height: 0;
+    }
+
+    /* ── Card 1: ORION orb ── */
+    #orb-card {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 18px 12px 16px;
+    }
+
+    /* Pastel blue glass sphere */
+    #orion-orb {
+      width: 74px;
+      height: 74px;
+      border-radius: 50%;
+      position: relative;
+      cursor: pointer;
+      overflow: hidden;
+      background: radial-gradient(
+        circle at 50% 55%,
+        rgba(210, 230, 255, 0.18) 0%,
+        rgba(180, 210, 255, 0.08) 100%
+      );
+      box-shadow:
+        0 0 0 1px rgba(160, 200, 255, 0.35),
+        0 6px 22px rgba(100, 160, 255, 0.18),
+        inset 0 0 14px rgba(255, 255, 255, 0.12);
+      transition: transform 0.2s ease, box-shadow 0.35s ease;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    #orion-orb:hover  { transform: scale(1.05); }
+    #orion-orb:active { transform: scale(0.96); }
+
+    /* Specular highlight */
+    #orion-orb::after {
+      content: '';
+      position: absolute; inset: 0; border-radius: 50%;
+      background: radial-gradient(
+        ellipse at 27% 20%,
+        rgba(255, 255, 255, 0.72) 0%,
+        rgba(255, 255, 255, 0.2) 28%,
+        transparent 52%
+      );
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    /* Rim glow */
+    #orion-orb::before {
+      content: '';
+      position: absolute; inset: 0; border-radius: 50%;
+      background: radial-gradient(
+        circle at 50% 50%,
+        transparent 50%,
+        rgba(140, 190, 255, 0.18) 68%,
+        rgba(160, 205, 255, 0.1) 82%,
+        transparent 100%
+      );
+      z-index: 9;
+      pointer-events: none;
+    }
+
+    .orb-blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(14px);
+      z-index: 2;
+    }
+
+    .orb-blob.b1 {
+      width: 64px; height: 64px;
+      background: radial-gradient(circle, rgba(100, 170, 255, 0.72) 0%, rgba(80, 150, 255, 0.38) 50%, transparent 72%);
+      top: -12px; left: -12px;
+    }
+
+    .orb-blob.b2 {
+      width: 56px; height: 56px;
+      background: radial-gradient(circle, rgba(150, 205, 255, 0.65) 0%, rgba(120, 185, 255, 0.32) 50%, transparent 72%);
+      bottom: -8px; right: -10px;
+    }
+
+    .orb-blob.b3 {
+      width: 44px; height: 44px;
+      background: radial-gradient(circle, rgba(190, 225, 255, 0.6) 0%, rgba(170, 215, 255, 0.28) 50%, transparent 72%);
+      top: 22%; right: -6px;
+    }
+
+    /* ── Orb keyframes ─────────────────────────────────── */
+    @keyframes swirl-a {
+      0%   { transform: translate(0px, 0px); }
+      25%  { transform: translate(16px, 10px); }
+      50%  { transform: translate(10px, 20px); }
+      75%  { transform: translate(-6px, 9px); }
+      100% { transform: translate(0px, 0px); }
+    }
+    @keyframes swirl-b {
+      0%   { transform: translate(0px, 0px); }
+      25%  { transform: translate(-13px, -16px); }
+      50%  { transform: translate(-19px, -6px); }
+      75%  { transform: translate(8px, -12px); }
+      100% { transform: translate(0px, 0px); }
+    }
+    @keyframes swirl-c {
+      0%   { transform: translate(0px, 0px); }
+      33%  { transform: translate(-13px, 9px); }
+      66%  { transform: translate(-6px, -13px); }
+      100% { transform: translate(0px, 0px); }
+    }
+    /* Connecting: orb fades in/out gently */
+    @keyframes orb-connecting {
+      0%,100% { opacity: 0.55; box-shadow: 0 0 0 1px rgba(148,163,184,0.3), 0 6px 16px rgba(148,163,184,0.12); }
+      50%     { opacity: 1;    box-shadow: 0 0 0 1px rgba(148,163,184,0.55), 0 6px 26px rgba(148,163,184,0.28); }
+    }
+    /* Listening: expanding ring emanates from orb */
+    @keyframes orb-listen-ring {
+      0%   { box-shadow: 0 0 0 0px rgba(34,197,94,0.7),  0 0 22px rgba(34,197,94,0.38); }
+      65%  { box-shadow: 0 0 0 10px rgba(34,197,94,0),   0 0 34px rgba(34,197,94,0.58); }
+      100% { box-shadow: 0 0 0 0px rgba(34,197,94,0.7),  0 0 22px rgba(34,197,94,0.38); }
+    }
+    /* Interrupted: amber double-flash then settles */
+    @keyframes orb-interrupted {
+      0%,100% { box-shadow: 0 0 0 1px rgba(245,158,11,0.45), 0 0 20px rgba(245,158,11,0.32); }
+      30%,70% { box-shadow: 0 0 0 3px rgba(245,158,11,0.9),  0 0 46px rgba(245,158,11,0.75); }
+      50%     { box-shadow: 0 0 0 1px rgba(245,158,11,0.25), 0 0  8px rgba(245,158,11,0.12); }
+    }
+
+    /* ── State: inactive (default) — blobs dim, no movement ── */
+    .orb-blob.b1 { opacity: 0.35; }
+    .orb-blob.b2 { opacity: 0.28; }
+    .orb-blob.b3 { opacity: 0.22; }
+
+    /* ── State: connecting — slow breathe ── */
+    #orion-orb.orb-connecting { animation: orb-connecting 1.7s ease-in-out infinite; }
+    #orion-orb.orb-connecting .orb-blob.b1 { opacity: 0.5; }
+    #orion-orb.orb-connecting .orb-blob.b2 { opacity: 0.4; }
+    #orion-orb.orb-connecting .orb-blob.b3 { opacity: 0.35; }
+
+    /* ── State: active — soft blue glow, slow swirl ── */
+    #orion-orb.orb-active {
+      box-shadow:
+        0 0 0 1px rgba(100, 160, 255, 0.45),
+        0 0 26px rgba(80, 140, 255, 0.38),
+        0 6px 22px rgba(60, 120, 220, 0.18),
+        inset 0 0 12px rgba(255, 255, 255, 0.1);
+    }
+    #orion-orb.orb-active .orb-blob.b1 { opacity: 1; animation: swirl-a 5.5s ease-in-out infinite; }
+    #orion-orb.orb-active .orb-blob.b2 { opacity: 1; animation: swirl-b 6.5s ease-in-out infinite; }
+    #orion-orb.orb-active .orb-blob.b3 { opacity: 1; animation: swirl-c 7.5s ease-in-out infinite; }
+
+    /* ── State: listening — green ring pulse, surgeon speaking ── */
+    #orion-orb.orb-listening { animation: orb-listen-ring 1.05s ease-out infinite; }
+    #orion-orb.orb-listening .orb-blob.b1 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(34,197,94,0.88) 0%, rgba(22,163,74,0.44) 50%, transparent 72%);
+      animation: swirl-a 2.4s ease-in-out infinite;
+    }
+    #orion-orb.orb-listening .orb-blob.b2 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(74,222,128,0.80) 0%, rgba(34,197,94,0.38) 50%, transparent 72%);
+      animation: swirl-b 2.8s ease-in-out infinite;
+    }
+    #orion-orb.orb-listening .orb-blob.b3 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(134,239,172,0.72) 0%, rgba(74,222,128,0.32) 50%, transparent 72%);
+      animation: swirl-c 3.2s ease-in-out infinite;
+    }
+
+    /* ── State: speaking — bright cyan, fast swirl ── */
+    #orion-orb.orb-speaking {
+      box-shadow:
+        0 0 0 2px rgba(56,189,248,0.62),
+        0 0 48px rgba(14,165,233,0.68),
+        0 6px 22px rgba(2,132,199,0.3),
+        inset 0 0 10px rgba(255,255,255,0.08);
+    }
+    #orion-orb.orb-speaking .orb-blob.b1 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(56,189,248,0.9) 0%, rgba(14,165,233,0.46) 50%, transparent 72%);
+      animation: swirl-a 1.6s ease-in-out infinite;
+    }
+    #orion-orb.orb-speaking .orb-blob.b2 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(125,211,252,0.84) 0%, rgba(56,189,248,0.40) 50%, transparent 72%);
+      animation: swirl-b 2.0s ease-in-out infinite;
+    }
+    #orion-orb.orb-speaking .orb-blob.b3 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(186,230,253,0.76) 0%, rgba(125,211,252,0.34) 50%, transparent 72%);
+      animation: swirl-c 2.4s ease-in-out infinite;
+    }
+
+    /* ── State: interrupted — amber flash × 3 ── */
+    #orion-orb.orb-interrupted { animation: orb-interrupted 0.5s ease-in-out 3; }
+    #orion-orb.orb-interrupted .orb-blob.b1 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(251,146,60,0.90) 0%, rgba(234,88,12,0.46) 50%, transparent 72%);
+    }
+    #orion-orb.orb-interrupted .orb-blob.b2 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(253,186,116,0.84) 0%, rgba(251,146,60,0.40) 50%, transparent 72%);
+    }
+    #orion-orb.orb-interrupted .orb-blob.b3 {
+      opacity: 1;
+      background: radial-gradient(circle, rgba(254,215,170,0.76) 0%, rgba(253,186,116,0.34) 50%, transparent 72%);
+    }
+
+    /* ── Screen Share ambient halo ── */
+    /* Two large blurred blobs orbit around the viewport perimeter.
+       overflow:hidden clips each blob so only the inward-facing half
+       is visible — creating a soft, widthless glow that bleeds in from
+       whichever edge the blob is currently nearest. No fixed border width. */
+    #screenshare-border {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0;
+      overflow: hidden;
+      transition: opacity 0.8s ease;
+    }
+    #screenshare-border.active {
+      opacity: 1;
+    }
+
+    /* Blob A — teal/cyan, starts at bottom-left */
+    #screenshare-border::before {
+      content: '';
+      position: absolute;
+      top: 100%;          /* fixed to bottom edge */
+      width: 800px;
+      height: 800px;
+      border-radius: 50%;
+      background: radial-gradient(circle,
+        rgba(0, 245, 212, 0.85)  0%,
+        rgba(14, 165, 233, 0.55) 40%,
+        transparent              70%
+      );
+      transform: translate(-50%, -50%);
+      animation:
+        ss-slide-a   7s ease-in-out infinite alternate,
+        ss-breathe-a 3s ease-in-out infinite alternate;
+    }
+
+    /* Blob B — indigo/blue, starts at bottom-right (opposite phase) */
+    #screenshare-border::after {
+      content: '';
+      position: absolute;
+      top: 100%;          /* fixed to bottom edge */
+      width: 700px;
+      height: 700px;
+      border-radius: 50%;
+      background: radial-gradient(circle,
+        rgba(99, 102, 241, 0.75)  0%,
+        rgba(14, 165, 233, 0.50)  40%,
+        transparent               70%
+      );
+      transform: translate(-50%, -50%);
+      animation:
+        ss-slide-b   7s ease-in-out infinite alternate,
+        ss-breathe-b 3s ease-in-out 1.5s infinite alternate;
+    }
+
+    /* Single-axis slide along bottom edge, BL ↔ BR.
+       alternate direction makes it ping-pong naturally.
+       ease-in-out on the animation itself creates the smooth
+       deceleration into each corner and acceleration out —
+       no manual keyframe holds needed. */
+    @keyframes ss-slide-a {
+      from { left: 0%;   }   /* bottom-left  */
+      to   { left: 100%; }   /* bottom-right */
+    }
+    @keyframes ss-slide-b {
+      from { left: 100%; }   /* bottom-right */
+      to   { left: 0%;   }   /* bottom-left  */
+    }
+
+    @keyframes ss-breathe-a {
+      from { filter: blur(60px); opacity: 0.80; }
+      to   { filter: blur(85px); opacity: 1.00; }
+    }
+    @keyframes ss-breathe-b {
+      from { filter: blur(65px); opacity: 0.70; }
+      to   { filter: blur(90px); opacity: 0.95; }
+    }
+
+    /* Screen share status badge shown in orb card when active */
+    #screenshare-badge {
+      display: none;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: #00f5d4;
+      padding: 3px 8px;
+      border-radius: 12px;
+      background: rgba(0, 245, 212, 0.12);
+      border: 1px solid rgba(0, 245, 212, 0.3);
+      cursor: pointer;
+      margin-top: 4px;
+    }
+    #screenshare-badge.ss-active {
+      display: flex;
+    }
+    #screenshare-badge .ss-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #00f5d4;
+      animation: ss-blink 1s ease-in-out infinite alternate;
+    }
+    @keyframes ss-blink {
+      from { opacity: 1; }
+      to   { opacity: 0.2; }
+    }
+
+    /* ── Status label colours per state ── */
+    #orion-status-label {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      text-align: center;
+    }
+    #orion-status-label.lbl-connecting  { color: #94a3b8; }
+    #orion-status-label.lbl-active      { color: #3b82f6; }
+    #orion-status-label.lbl-listening   { color: #16a34a; }
+    #orion-status-label.lbl-speaking    { color: #0284c7; }
+    #orion-status-label.lbl-interrupted { color: #d97706; }
+
+    /* ── Card 2: Agents & Tools ── */
+    #agents-card {
+      flex: 0 0 auto;
+    }
+
+    #agents-tools-body {
+      padding: 12px 14px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .at-section-label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #475569;
+      margin-bottom: 4px;
+    }
+
+    #agents-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+    }
+
+    .agents-row-span {
+      grid-column: 1 / -1;
+    }
+
+    .agent-chip {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+      text-transform: none;
+      padding: 5px 8px;
+      border-radius: 4px;
+      background: transparent;
+      border: 1px solid rgba(0, 0, 0, 0.14);
+      color: #475569;
+      text-align: center;
+      transition: background 0.22s ease, color 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+    }
+
+    /* ── Tools list ── */
+    #tools-row {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .tools-row-span {
+      width: 100%;
+    }
+
+    .tool-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      color: #475569;
+      transition: color 0.2s ease;
+    }
+
+    .tool-chip:last-child {
+      border-bottom: none;
+    }
+
+    .tool-chip-count {
+      flex-shrink: 0;
+      font-size: 11px;
+      font-weight: 600;
+      color: #0d9488;
+      min-width: 20px;
+      text-align: right;
+      opacity: 0;
+    }
+
+    .tool-chip.called .tool-chip-count {
+      opacity: 1;
+    }
+
+    .tool-chip-name {
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: 0;
+      font-family: 'Poppins', sans-serif;
+      line-height: 1.3;
+      color: #475569;
+    }
+
+    .tool-chip.active .tool-chip-name {
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .tool-chip.called .tool-chip-name {
+      color: #0f172a;
+    }
+
+    /* Per-agent active colours */
+    .agent-chip.active[data-agent="ORION_Orchestrator"] {
+      background: rgba(59, 130, 246, 0.14);
+      border-color: rgba(59, 130, 246, 0.45);
+      color: #3b82f6;
+      box-shadow: 0 0 7px rgba(59, 130, 246, 0.22);
+    }
+    .agent-chip.active[data-agent="IR_Agent"] {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.4);
+      color: #10b981;
+      box-shadow: 0 0 7px rgba(16, 185, 129, 0.2);
+    }
+    .agent-chip.active[data-agent="IV_Agent"] {
+      background: rgba(139, 92, 246, 0.12);
+      border-color: rgba(139, 92, 246, 0.4);
+      color: #8b5cf6;
+      box-shadow: 0 0 7px rgba(139, 92, 246, 0.2);
+    }
+    .agent-chip.active[data-agent="AR_Agent"] {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.4);
+      color: #f59e0b;
+      box-shadow: 0 0 7px rgba(245, 158, 11, 0.2);
+    }
+    .agent-chip.active[data-agent="PC_Agent"] {
+      background: rgba(236, 72, 153, 0.12);
+      border-color: rgba(236, 72, 153, 0.4);
+      color: #ec4899;
+      box-shadow: 0 0 7px rgba(236, 72, 153, 0.2);
+    }
+    .agent-chip.active[data-agent="DOC_Agent"] {
+      background: rgba(20, 184, 166, 0.12);
+      border-color: rgba(20, 184, 166, 0.4);
+      color: #14b8a6;
+      box-shadow: 0 0 7px rgba(20, 184, 166, 0.2);
+    }
+    .agent-chip.active[data-agent="Briefing_Agent"] {
+      background: rgba(99, 102, 241, 0.12);
+      border-color: rgba(99, 102, 241, 0.4);
+      color: #6366f1;
+      box-shadow: 0 0 7px rgba(99, 102, 241, 0.2);
+    }
+    .agent-chip.active[data-agent="Timeout_Agent"] {
+      background: rgba(251, 146, 60, 0.12);
+      border-color: rgba(251, 146, 60, 0.4);
+      color: #fb923c;
+      box-shadow: 0 0 7px rgba(251, 146, 60, 0.2);
+    }
+    .agent-chip.active[data-agent="Report_Agent"] {
+      background: rgba(163, 230, 53, 0.12);
+      border-color: rgba(163, 230, 53, 0.4);
+      color: #84cc16;
+      box-shadow: 0 0 7px rgba(163, 230, 53, 0.2);
+    }
+    .agent-chip.active[data-agent="Complication_Advisor"] {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #ef4444;
+      box-shadow: 0 0 7px rgba(239, 68, 68, 0.2);
+    }
+    .agent-chip.active[data-agent="EBL_Tracker"] {
+      background: rgba(234, 179, 8, 0.12);
+      border-color: rgba(234, 179, 8, 0.4);
+      color: #eab308;
+      box-shadow: 0 0 7px rgba(234, 179, 8, 0.2);
+    }
+    .agent-chip.active[data-agent="Drug_Checker"] {
+      background: rgba(168, 85, 247, 0.12);
+      border-color: rgba(168, 85, 247, 0.4);
+      color: #a855f7;
+      box-shadow: 0 0 7px rgba(168, 85, 247, 0.2);
+    }
+    .agent-chip.active[data-agent="Anatomy_Spotter"] {
+      background: rgba(6, 182, 212, 0.12);
+      border-color: rgba(6, 182, 212, 0.4);
+      color: #06b6d4;
+      box-shadow: 0 0 7px rgba(6, 182, 212, 0.2);
+    }
+    .agent-chip.active[data-agent="Handoff_Agent"] {
+      background: rgba(52, 211, 153, 0.12);
+      border-color: rgba(52, 211, 153, 0.4);
+      color: #34d399;
+      box-shadow: 0 0 7px rgba(52, 211, 153, 0.2);
+    }
+    .agent-chip.active[data-agent="Screen_Advisor"] {
+      background: rgba(34, 211, 238, 0.12);
+      border-color: rgba(34, 211, 238, 0.5);
+      color: #22d3ee;
+      box-shadow: 0 0 7px rgba(34, 211, 238, 0.25);
+    }
+
+
+    /* ── Card 3: Agent activity ── */
+    #routing-card {
+      flex: 0 0 auto;
+    }
+
+    #routing-log {
+      overflow-y: auto;
+      max-height: 240px;
+      padding: 10px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .routing-event {
+      font-size: 11px;
+      padding: 3px 0 3px 8px;
+      border-left: 2px solid #e2e8f0;
+      color: #64748b;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    .routing-event.transfer  { border-left-color: #f0a040; color: #8a5800; }
+    .routing-event.tool-call { border-left-color: #5aabf0; color: #1a6baa; }
+    .routing-event.turn      { border-left-color: #80b8f0; color: #2a6090; }
+    .routing-event.error     { border-left-color: #e05555; color: #a02020; }
+
+    /* ── Card 3: Conversation ── */
+    #transcript-card {
+      flex: 0 0 auto;
+    }
+
+    #transcript-log {
+      overflow-y: auto;
+      max-height: 320px;
+      padding: 10px 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .transcript-entry {
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 7px 10px;
+      border-radius: 6px;
+      max-width: 100%;
+      word-break: break-word;
+    }
+
+    .transcript-entry .speaker {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 3px;
+      opacity: 0.55;
+    }
+
+    .transcript-entry.surgeon {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      color: #1e3a8a;
+      align-self: flex-end;
+    }
+
+    .transcript-entry.orion {
+      background: #f0fdfa;
+      border: 1px solid #99f6e4;
+      color: #134e4a;
+      align-self: flex-start;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.12); border-radius: 2px; }
+
+    /* ── Hover Tooltip ────────────────────────────────────────────────────── */
+    #orion-tooltip {
+      position: fixed;
+      z-index: 9999;
+      pointer-events: none;
+      opacity: 0;
+      width: 218px;
+      transition: opacity 0.14s ease;
+    }
+    #orion-tooltip.tt-visible { opacity: 1; }
+
+    .tt-inner {
+      background: #ffffff;
+      border: 1px solid rgba(0, 0, 0, 0.11);
+      border-radius: 8px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+      position: relative;
+      overflow: visible;
+    }
+    /* Caret pointing right (toward the chip) */
+    .tt-inner::before {
+      content: '';
+      position: absolute;
+      right: -8px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0; height: 0;
+      border-top: 7px solid transparent;
+      border-bottom: 7px solid transparent;
+      border-left: 7px solid rgba(0, 0, 0, 0.11);
+      z-index: 1;
+    }
+    .tt-inner::after {
+      content: '';
+      position: absolute;
+      right: -6px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0; height: 0;
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+      border-left: 6px solid #ffffff;
+      z-index: 2;
+    }
+    .tt-header {
+      padding: 8px 12px 7px;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      background: #f8fafc;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+      border-radius: 8px 8px 0 0;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .tt-header-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: #0d9488;
+      flex-shrink: 0;
+    }
+    .tt-name {
+      padding: 8px 12px 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #0f172a;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    }
+    .tt-cmds {
+      padding: 8px 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .tt-cmd {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      font-size: 11px;
+      color: #475569;
+      line-height: 1.4;
+    }
+    .tt-cmd-bullet {
+      color: #0d9488;
+      font-size: 13px;
+      line-height: 1.1;
+      flex-shrink: 0;
+      font-weight: 700;
+    }
+
+    /* Agents & tools get a subtle hover cursor */
+    .agent-chip, .tool-chip { cursor: default; }
+  </style>
+</head>
+<body>
+
+  <!-- ── Left area: surgical video + context tiles ── -->
+  <div id="display-area">
+
+    <!-- Video always fills the left portion -->
+    <div id="video-pane">
+      <video id="surgical-video" autoplay muted playsinline></video>
+    </div>
+
+    <!-- Tile column — expands when any panel is visible -->
+    <div id="tiles-column">
+
+      <!-- CT scan tile -->
+      <div id="ct-modal" class="tile-panel">
+        <div class="modal-title">CT Viewer</div>
+        <div class="modal-body">
+          <canvas id="ct-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- 3D anatomy tile -->
+      <div id="ar-modal" class="tile-panel">
+        <div class="modal-title">3D Anatomy</div>
+        <div class="modal-body">
+          <canvas id="ar-canvas"></canvas>
+        </div>
+      </div>
+
+      <!-- Patient vitals tile -->
+      <div id="clinical-modal" class="tile-panel">
+        <div class="modal-title">Patient Vitals</div>
+        <div id="vitals-body" class="modal-body"></div>
+      </div>
+
+      <!-- Procedural context / surgical phase tile -->
+      <div id="checklist-modal" class="tile-panel">
+        <div class="modal-title">Procedural Context</div>
+        <div id="checklist-body" class="modal-body"></div>
+      </div>
+
+      <!-- Intraoperative documentation / operative event log tile -->
+      <div id="log-modal" class="tile-panel">
+        <div class="modal-title">Operative Log</div>
+        <div id="log-body" class="modal-body"></div>
+      </div>
+
+      <!-- Agent summary tile — WHO Timeout / Report / Complication / Handoff -->
+      <div id="summary-modal" class="tile-panel">
+        <div class="modal-title">Summary</div>
+        <div id="summary-body" class="modal-body"></div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ── Right 15%: three glassmorphism cards ── -->
+  <div id="right-panel">
+
+    <!-- Card 1: ORION orb + status -->
+    <div id="orb-card" class="side-card">
+      <div id="orion-orb" title="Click to connect / disconnect ORION">
+        <div class="orb-blob b1"></div>
+        <div class="orb-blob b2"></div>
+        <div class="orb-blob b3"></div>
+      </div>
+      <span id="orion-status-label">ORION offline. Tap to wake.</span>
+      <div id="screenshare-badge" title="Screen share active — click to stop">
+        <span class="ss-dot"></span>Screen Share
+      </div>
+    </div>
+
+    <!-- Card 2: Agents & Tools -->
+    <div id="agents-card" class="side-card">
+      <div class="card-label" onclick="toggleCard(this)">Agents &amp; Tools<span class="card-toggle">▾</span></div>
+      <div class="card-body">
+        <div id="agents-tools-body">
+
+          <!-- Agents -->
+          <div>
+            <div class="at-section-label">Agents</div>
+            <div id="agents-row">
+              <div class="agent-chip agents-row-span" data-agent="ORION_Orchestrator">Orchestrator</div>
+              <div class="at-section-label agents-row-span" style="margin-top:4px;">Protocol</div>
+              <div class="agent-chip" data-agent="Briefing_Agent">Briefing</div>
+              <div class="agent-chip" data-agent="Timeout_Agent">WHO Timeout</div>
+              <div class="agent-chip" data-agent="Report_Agent">Op. Report</div>
+              <div class="at-section-label agents-row-span" style="margin-top:4px;">Decision Support</div>
+              <div class="agent-chip" data-agent="Complication_Advisor">Complication Advisor</div>
+              <div class="agent-chip" data-agent="EBL_Tracker">EBL Tracker</div>
+              <div class="agent-chip" data-agent="Drug_Checker">Drug Checker</div>
+              <div class="agent-chip" data-agent="Anatomy_Spotter">Anatomy Spotter</div>
+              <div class="agent-chip" data-agent="Handoff_Agent">Handoff</div>
+              <div class="at-section-label agents-row-span" style="margin-top:4px;">Visual Intelligence</div>
+              <div class="agent-chip" data-agent="Screen_Advisor">Visual Assistant</div>
+            </div>
+          </div>
+
+          <!-- Tools -->
+          <div>
+            <div class="at-section-label" style="margin-top:6px;">Tools</div>
+            <div id="tools-row">
+              <div class="at-section-label" style="margin-top:2px;">Patient Data</div>
+              <div class="tool-chip" data-tool="display_patient_data"><span class="tool-chip-count"></span><span class="tool-chip-name">display_patient_data</span></div>
+              <div class="tool-chip" data-tool="display_all_patient_data"><span class="tool-chip-count"></span><span class="tool-chip-name">display_all_patient_data</span></div>
+              <div class="tool-chip" data-tool="hide_patient_data"><span class="tool-chip-count"></span><span class="tool-chip-name">hide_patient_data</span></div>
+              <div class="at-section-label" style="margin-top:4px;">CT Imaging</div>
+              <div class="tool-chip" data-tool="navigate_ct"><span class="tool-chip-count"></span><span class="tool-chip-name">navigate_ct</span></div>
+              <div class="tool-chip" data-tool="jump_to_landmark"><span class="tool-chip-count"></span><span class="tool-chip-name">jump_to_landmark</span></div>
+              <div class="tool-chip" data-tool="hide_ct"><span class="tool-chip-count"></span><span class="tool-chip-name">hide_ct</span></div>
+              <div class="at-section-label" style="margin-top:4px;">3D Anatomy</div>
+              <div class="tool-chip" data-tool="rotate_model"><span class="tool-chip-count"></span><span class="tool-chip-name">rotate_model</span></div>
+              <div class="tool-chip" data-tool="toggle_structure"><span class="tool-chip-count"></span><span class="tool-chip-name">toggle_structure</span></div>
+              <div class="tool-chip" data-tool="hide_3d"><span class="tool-chip-count"></span><span class="tool-chip-name">hide_3d</span></div>
+              <div class="tool-chip" data-tool="reset_3d_view"><span class="tool-chip-count"></span><span class="tool-chip-name">reset_3d_view</span></div>
+              <div class="at-section-label" style="margin-top:4px;">Procedure</div>
+              <div class="tool-chip" data-tool="get_surgical_phase"><span class="tool-chip-count"></span><span class="tool-chip-name">get_surgical_phase</span></div>
+              <div class="tool-chip" data-tool="hide_surgical_checklist"><span class="tool-chip-count"></span><span class="tool-chip-name">hide_surgical_checklist</span></div>
+              <div class="at-section-label" style="margin-top:4px;">Op. Log</div>
+              <div class="tool-chip" data-tool="log_event"><span class="tool-chip-count"></span><span class="tool-chip-name">log_event</span></div>
+              <div class="tool-chip" data-tool="show_event_log"><span class="tool-chip-count"></span><span class="tool-chip-name">show_event_log</span></div>
+              <div class="tool-chip" data-tool="hide_event_log"><span class="tool-chip-count"></span><span class="tool-chip-name">hide_event_log</span></div>
+              <div class="tool-chip" data-tool="capture_surgical_photo"><span class="tool-chip-count"></span><span class="tool-chip-name">capture_surgical_photo</span></div>
+              <div class="at-section-label" style="margin-top:4px;">Decision Support</div>
+              <div class="tool-chip" data-tool="get_complication_protocol"><span class="tool-chip-count"></span><span class="tool-chip-name">get_complication_protocol</span></div>
+              <div class="tool-chip" data-tool="update_ebl"><span class="tool-chip-count"></span><span class="tool-chip-name">update_ebl</span></div>
+              <div class="tool-chip" data-tool="get_ebl_summary"><span class="tool-chip-count"></span><span class="tool-chip-name">get_ebl_summary</span></div>
+              <div class="tool-chip" data-tool="check_drug_safety"><span class="tool-chip-count"></span><span class="tool-chip-name">check_drug_safety</span></div>
+              <div class="tool-chip" data-tool="get_anatomy_context"><span class="tool-chip-count"></span><span class="tool-chip-name">get_anatomy_context</span></div>
+              <div class="at-section-label" style="margin-top:4px;">Global</div>
+              <div class="tool-chip" data-tool="hide_all_overlays"><span class="tool-chip-count"></span><span class="tool-chip-name">hide_all_overlays</span></div>
+              <div class="tool-chip" data-tool="show_only_ar"><span class="tool-chip-count"></span><span class="tool-chip-name">show_only_ar</span></div>
+              <div class="at-section-label" style="margin-top:4px;">Screen Share</div>
+              <div class="tool-chip" data-tool="start_screen_share"><span class="tool-chip-count"></span><span class="tool-chip-name">start_screen_share</span></div>
+              <div class="tool-chip" data-tool="stop_screen_share"><span class="tool-chip-count"></span><span class="tool-chip-name">stop_screen_share</span></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 3: Agent activity -->
+    <div id="routing-card" class="side-card">
+      <div class="card-label" onclick="toggleCard(this)">Agent activity<span class="card-toggle">▾</span></div>
+      <div class="card-body">
+        <div id="routing-log">
+          <div class="routing-event">Waiting for connection…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 4: Conversation -->
+    <div id="transcript-card" class="side-card">
+      <div class="card-label" onclick="toggleCard(this)">Conversation<span class="card-toggle">▾</span></div>
+      <div class="card-body">
+        <div id="transcript-log"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    function toggleCard(labelEl) {
+      labelEl.closest('.side-card').classList.toggle('collapsed');
+    }
+  </script>
+
+  <!-- Screen share animated border overlay (pointer-events:none, z-index:9999) -->
+  <div id="screenshare-border"></div>
+
+  <!-- ── Scripts ── -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+  <script src="/static/js/ct-viewer.js"></script>
+  <script src="/static/js/anatomy-3d.js"></script>
+  <script src="/static/js/clinical-panel.js"></script>
+  <script src="/static/js/checklist-panel.js"></script>
+  <script src="/static/js/log-panel.js"></script>
+  <script src="/static/js/summary-panel.js"></script>
+  <script src="/static/js/screenshare-agent.js"></script>
+
+  <script type="module" src="/static/js/app.js"></script>
+
+  <script>
+    // ── Agent & Tool hover tooltips ────────────────────────────────────────
+    (function () {
+      const TIPS = {
+        agents: {
+          ORION_Orchestrator: {
+            label: 'ORION Orchestrator',
+            cmds: ["Show patient vitals", "What's the current surgical phase?", "Clear all overlays"]
+          },
+          Briefing_Agent: {
+            label: 'Briefing Agent',
+            cmds: ["Give me a pre-op briefing", "What's this patient's history?", "Summarize today's procedure"]
+          },
+          Timeout_Agent: {
+            label: 'WHO Timeout Agent',
+            cmds: ["Start the surgical timeout", "Run the safety checklist", "Verify the surgical site"]
+          },
+          Report_Agent: {
+            label: 'Operative Report Agent',
+            cmds: ["Generate the operative report", "Summarize what we did", "Document the procedure"]
+          },
+          Complication_Advisor: {
+            label: 'Complication Advisor',
+            cmds: ["I see unexpected bleeding", "Protocol for bowel injury?", "Help me manage this complication"]
+          },
+          EBL_Tracker: {
+            label: 'EBL Tracker',
+            cmds: ["Add 200ml blood loss", "What's total EBL so far?", "Log suction output of 350ml"]
+          },
+          Drug_Checker: {
+            label: 'Drug Checker',
+            cmds: ["Is heparin safe with warfarin?", "Check propofol dosing", "Contraindications for epinephrine?"]
+          },
+          Anatomy_Spotter: {
+            label: 'Anatomy Spotter',
+            cmds: ["What structure is near the ureter?", "Identify this tissue", "Show anatomy in this region"]
+          },
+          Handoff_Agent: {
+            label: 'Handoff Agent',
+            cmds: ["Prepare a handoff summary", "What should the next team know?", "Generate an SBAR handoff"]
+          },
+          Screen_Advisor: {
+            label: 'Screen Advisor',
+            cmds: ["ORION, start screen share", "Enter visual assistance mode", "What do you see on my screen?", "Read the lab values on the monitor"]
+          },
+        },
+        tools: {
+          display_patient_data: {
+            label: 'Display Patient Data',
+            cmds: ["Show patient vitals", "Pull up patient info", "Display the patient card"]
+          },
+          display_all_patient_data: {
+            label: 'Display All Patient Data',
+            cmds: ["Show everything about this patient", "Full patient overview", "All patient data now"]
+          },
+          hide_patient_data: {
+            label: 'Hide Patient Data',
+            cmds: ["Hide the vitals", "Clear the patient card", "Remove patient overlay"]
+          },
+          navigate_ct: {
+            label: 'Navigate CT',
+            cmds: ["Go to CT slice 45", "Scroll to mid-thorax", "Navigate CT to slice 80"]
+          },
+          jump_to_landmark: {
+            label: 'Jump to Landmark',
+            cmds: ["Jump to the tumor", "Go to the renal hilum", "Show me the landmark"]
+          },
+          hide_ct: {
+            label: 'Hide CT Viewer',
+            cmds: ["Close the CT viewer", "Hide the CT scan", "Remove CT overlay"]
+          },
+          rotate_model: {
+            label: 'Rotate 3D Model',
+            cmds: ["Rotate the model 45 degrees", "Spin the anatomy view left", "Turn the 3D model right"]
+          },
+          toggle_structure: {
+            label: 'Toggle Structure',
+            cmds: ["Toggle the left kidney", "Show the aorta", "Hide the renal artery"]
+          },
+          hide_3d: {
+            label: 'Hide 3D Model',
+            cmds: ["Hide the 3D model", "Close anatomy view", "Remove 3D overlay"]
+          },
+          reset_3d_view: {
+            label: 'Reset 3D View',
+            cmds: ["Reset the anatomy view", "Return to default orientation", "Reset the 3D model"]
+          },
+          get_surgical_phase: {
+            label: 'Get Surgical Phase',
+            cmds: ["What phase are we in?", "Show the surgical checklist", "What's the current step?"]
+          },
+          hide_surgical_checklist: {
+            label: 'Hide Checklist',
+            cmds: ["Hide the checklist", "Close procedural context", "Remove phase display"]
+          },
+          log_event: {
+            label: 'Log Event',
+            cmds: ["Log specimen removal", "Record port placement time", "Document this incision step"]
+          },
+          show_event_log: {
+            label: 'Show Event Log',
+            cmds: ["Show the operative log", "Open the event history", "Display what we've logged"]
+          },
+          hide_event_log: {
+            label: 'Hide Event Log',
+            cmds: ["Hide the event log", "Close the log view", "Remove log overlay"]
+          },
+          capture_surgical_photo: {
+            label: 'Capture Photo',
+            cmds: ["Take a photo now", "Capture this view", "Photograph this finding"]
+          },
+          get_complication_protocol: {
+            label: 'Complication Protocol',
+            cmds: ["Protocol for hemorrhage?", "How do I handle this injury?", "Complication management guide"]
+          },
+          update_ebl: {
+            label: 'Update EBL',
+            cmds: ["Add 150ml blood loss", "Log 400ml suction output", "Update EBL by 250ml"]
+          },
+          get_ebl_summary: {
+            label: 'Get EBL Summary',
+            cmds: ["Total blood loss so far?", "EBL summary please", "How much have we lost?"]
+          },
+          check_drug_safety: {
+            label: 'Check Drug Safety',
+            cmds: ["Is this drug safe here?", "Check interaction with current meds", "Safe to give epinephrine?"]
+          },
+          get_anatomy_context: {
+            label: 'Get Anatomy Context',
+            cmds: ["What's adjacent to the ureter?", "Anatomy near the hilum?", "Structures in this region?"]
+          },
+          hide_all_overlays: {
+            label: 'Hide All Overlays',
+            cmds: ["Clear everything", "Hide all panels", "Clean up the display"]
+          },
+          show_only_ar: {
+            label: 'Show Only 3D',
+            cmds: ["Show only the 3D anatomy", "Focus on anatomy view", "3D model only please"]
+          },
+          show_agent_summary: {
+            label: 'Show Agent Summary',
+            cmds: ["Show the summary", "Display the agent output", "Show me the results"]
+          },
+          start_screen_share: {
+            label: 'Start Screen Share',
+            cmds: ["ORION, start screen share", "Share my screen with ORION", "Enable visual analysis"]
+          },
+          stop_screen_share: {
+            label: 'Stop Screen Share',
+            cmds: ["ORION, stop screen share", "End screen sharing", "Disable visual analysis"]
+          },
+        },
+      };
+
+      // Build tooltip element
+      const tip = document.createElement('div');
+      tip.id = 'orion-tooltip';
+      tip.innerHTML = `
+        <div class="tt-inner">
+          <div class="tt-header"><span class="tt-header-dot"></span>Try saying…</div>
+          <div class="tt-name" id="tt-name"></div>
+          <div class="tt-cmds" id="tt-cmds"></div>
+        </div>`;
+      document.body.appendChild(tip);
+
+      let hideTimer = null;
+
+      function show(el, type, key) {
+        const data = TIPS[type]?.[key];
+        if (!data) return;
+        clearTimeout(hideTimer);
+
+        document.getElementById('tt-name').textContent = data.label;
+        document.getElementById('tt-cmds').innerHTML = data.cmds
+          .map(c => `<div class="tt-cmd"><span class="tt-cmd-bullet">›</span><span>${c}</span></div>`)
+          .join('');
+
+        const rect  = el.getBoundingClientRect();
+        const tipW  = 218;
+        const tipH  = tip.offsetHeight || 110; // rough height for centering
+        const left  = Math.max(4, rect.left - tipW - 12);
+        const top   = rect.top + rect.height / 2;
+
+        tip.style.left = left + 'px';
+        tip.style.top  = top  + 'px';
+        tip.style.transform = 'translateY(-50%)';
+        tip.classList.add('tt-visible');
+      }
+
+      function hide() {
+        hideTimer = setTimeout(() => tip.classList.remove('tt-visible'), 80);
+      }
+
+      document.querySelectorAll('[data-agent]').forEach(el => {
+        el.addEventListener('mouseenter', () => show(el, 'agents', el.dataset.agent));
+        el.addEventListener('mouseleave', hide);
+      });
+      document.querySelectorAll('[data-tool]').forEach(el => {
+        el.addEventListener('mouseenter', () => show(el, 'tools', el.dataset.tool));
+        el.addEventListener('mouseleave', hide);
+      });
+    })();
+  </script>
+
+</body>
+</html>

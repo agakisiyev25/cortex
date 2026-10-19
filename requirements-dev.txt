@@ -1,0 +1,9 @@
+-r requirements.txt
+numpy
+scipy
+nibabel==5.4.2
+scikit-image==0.26.0
+trimesh==5.1.1
+Pillow
+pytest
+websockets

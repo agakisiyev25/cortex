@@ -1,0 +1,11 @@
+modules = ["python-3.11"]
+run = "pip install -q -r requirements.txt && cd app && uvicorn main:app --host 0.0.0.0 --port 8080"
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[deployment]
+deploymentTarget = "gce"
+build = ["sh", "-c", "pip install -r requirements.txt"]
+run = ["sh", "-c", "cd app && uvicorn main:app --host 0.0.0.0 --port 8080"]
