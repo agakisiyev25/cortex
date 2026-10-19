@@ -17,7 +17,6 @@ const Anatomy3D = (() => {
   let legendOrder = [];
   let displayNames = {};
   let colors = {};
-  let modelRadius = 0;
   const structures = {};
 
   function init(config) {
@@ -45,13 +44,12 @@ const Anatomy3D = (() => {
     controls.enablePan = false;
     controls.addEventListener('start', () => _setViewName('Custom'));
 
-    scene.add(new THREE.HemisphereLight(0xE8F4F2, 0x0A1413, 0.75));
+    const hemisphere = new THREE.HemisphereLight(0xE8F4F2, 0x0A1413, 0.75);
     const key = new THREE.DirectionalLight(0xffffff, 1.1);
     key.position.set(3, 5, 4);
-    scene.add(key);
     const rim = new THREE.DirectionalLight(0x7FE9DA, 0.6);
     rim.position.set(-4, 2, -5);
-    scene.add(rim);
+    scene.add(hemisphere, key, rim);
 
     _resize();
     window.addEventListener('resize', _resize);
@@ -77,8 +75,8 @@ const Anatomy3D = (() => {
         content.traverse((child) => {
           if (!child.isMesh) return;
           const name = child.name.toLowerCase();
+          if (!child.geometry.attributes.normal) child.geometry.computeVertexNormals();
           if (name === 'brain') {
-            if (!child.geometry.getAttribute('normal')) child.geometry.computeVertexNormals();
             child.material = new THREE.ShaderMaterial({
               uniforms: { uColor: { value: new THREE.Color('#C9D2DA') }, uBase: { value: 0.04 }, uRim: { value: 0.6 }, uPower: { value: 2.2 } },
               vertexShader: 'varying vec3 vN; varying vec3 vV; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
@@ -105,11 +103,11 @@ const Anatomy3D = (() => {
             child.renderOrder = 1;
           }
           child.material.needsUpdate = true;
+          console.log(child.name, Boolean(child.geometry.attributes.normal), child.material.type);
           structures[name] = child;
         });
 
         _applyDefaultRotation();
-        modelRadius = new THREE.Box3().setFromObject(model).getBoundingSphere(new THREE.Sphere()).radius;
         controls.target.set(0, 0, 0);
         _fitCamera();
         controls.saveState();
@@ -130,22 +128,23 @@ const Anatomy3D = (() => {
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    if (modelRadius) _fitCamera();
+    if (model) _fitCamera();
   }
 
   function _fitCamera() {
-    if (!modelRadius || !camera || !controls || !container) return;
-    const width = Math.max(1, container.clientWidth);
-    const height = Math.max(1, container.clientHeight);
+    if (!model || !camera || !controls) return;
+    const box = new THREE.Box3().setFromObject(model);
+    const sphere = box.getBoundingSphere(new THREE.Sphere());
     const direction = camera.position.clone().sub(controls.target);
     if (!direction.lengthSq()) direction.set(0, 0, 1);
     direction.normalize();
     const vf = THREE.MathUtils.degToRad(camera.fov / 2);
-    const hf = Math.atan(Math.tan(vf) * (width / height));
-    const distance = modelRadius * 1.18 / Math.sin(Math.min(vf, hf));
-    camera.position.copy(controls.target).addScaledVector(direction, distance);
-    camera.near = Math.max(0.01, distance - modelRadius * 2.5);
-    camera.far = distance + modelRadius * 4;
+    const hf = Math.atan(Math.tan(vf) * camera.aspect);
+    const distance = sphere.radius * 0.75 / Math.sin(Math.min(vf, hf));
+    controls.target.copy(sphere.center);
+    camera.position.copy(sphere.center).addScaledVector(direction, distance);
+    camera.near = distance / 100;
+    camera.far = distance * 10;
     camera.updateProjectionMatrix();
     controls.update();
   }

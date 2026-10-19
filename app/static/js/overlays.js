@@ -22,6 +22,7 @@ const Drawer = (() => {
   let caseData = null;
   let logEntries = [];
   const cards = new Map();
+  const cardOrder = ['patient', 'volumes', 'checklist', 'log'];
   const eventNames = {
     timeout_complete: 'Time-out complete',
     incision: 'Incision',
@@ -58,14 +59,17 @@ const Drawer = (() => {
 
     const existing = cards.get(kind);
     if (existing) existing.replaceWith(card);
-    else inner.prepend(card);
+    else inner.appendChild(card);
     cards.set(kind, card);
 
-    while (inner.children.length > 3) {
-      const oldest = inner.lastElementChild;
-      cards.delete(oldest.dataset.kind);
-      oldest.remove();
+    while (cards.size > 3) {
+      const oldestKind = cards.keys().next().value;
+      cards.get(oldestKind).remove();
+      cards.delete(oldestKind);
     }
+    [...cards.entries()]
+      .sort(([a], [b]) => cardOrder.indexOf(a) - cardOrder.indexOf(b))
+      .forEach(([, element]) => inner.appendChild(element));
     _syncOpen();
   }
 
