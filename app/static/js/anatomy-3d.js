@@ -136,6 +136,14 @@ const Anatomy3D = (() => {
             child.material.transparent = false;
             child.material.depthWrite  = true;
             child.material.needsUpdate = true;
+            if (child.name.toLowerCase() === 'brain') {
+              child.material.transparent = true;
+              child.material.opacity = 0.18;
+              child.material.depthWrite = false;
+              child.renderOrder = 2;
+            } else {
+              child.renderOrder = 1;
+            }
             meshCount++;
           }
         });
@@ -178,6 +186,7 @@ const Anatomy3D = (() => {
     _show();
     axis = axis.toLowerCase();
     if (!['x', 'y', 'z'].includes(axis)) return;
+    model.rotation.set(0, 0, 0);
     model.rotation[axis] = THREE.MathUtils.degToRad(degrees);
   }
 

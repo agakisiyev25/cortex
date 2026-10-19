@@ -1,8 +1,8 @@
 /**
- * ct-viewer.js — CT scan slice overlay renderer
- * ===============================================
- * Renders CT PNG slices from GCS onto a canvas element layered
- * over the surgical video. Maintains current slice state internally.
+ * ct-viewer.js — MRI scan slice overlay renderer
+ * ================================================
+ * Renders MRI PNG slices onto a canvas element. Maintains current
+ * slice state internally.
  *
  * Public API (called by app.js dispatchRenderCommand):
  *   CTViewer.init(config)
@@ -19,39 +19,33 @@ const CTViewer = (() => {
   let canvas      = null;
   let ctx         = null;
   let modal       = null;   // parent .overlay-modal wrapper
-  let gcsBase     = '';
-  let ctPath      = '';
-  let totalSlices = 350;
-  let currentSlice = 67;   // start at mid-chest (~carina level)
-
-  // Must match CT_LANDMARKS in tools.py exactly (same slice numbers).
-  // Calibrated to LIDC-IDRI-0001: 133 slices, 2.5mm spacing, z=-340→-10mm.
-  const LANDMARKS = {
-    'diaphragm':   11,
-    'tumor':       29,
-    'carina':      69,
-    'bronchus':    65,
-    'aortic_arch': 81,
-    'clavicle':   115,
-  };
+  let slicesBase  = '';
+  let totalSlices = 0;
+  let pad         = 3;
+  let landmarks   = {};
+  let currentSlice = 1;
 
 
   // ── Initialisation ───────────────────────────────────────────────────────
 
   /**
    * @param {Object} config
-   * @param {string} config.canvasId       - DOM id of the CT canvas element
-   * @param {string} config.gcsBase        - GCS public HTTPS base URL
-   * @param {string} config.ctPath         - path inside bucket: e.g. 'ct/case_demo_001'
+   * @param {string} config.canvasId       - DOM id of the MRI canvas element
+   * @param {string} config.slicesBase     - URL containing numbered PNG slices
    * @param {number} config.totalSlices    - total number of PNG slices
+   * @param {number} config.pad            - slice filename zero-padding
+   * @param {Object} config.landmarks      - landmark to slice mapping
+   * @param {number} config.startSlice     - initial slice number
    */
   function init(config) {
     canvas      = document.getElementById(config.canvasId);
     ctx         = canvas.getContext('2d');
     modal       = canvas.closest('.tile-panel');
-    gcsBase     = config.gcsBase;
-    ctPath      = config.ctPath;
-    totalSlices = config.totalSlices || 350;
+    slicesBase  = config.slicesBase;
+    totalSlices = config.totalSlices;
+    pad         = config.pad;
+    landmarks   = config.landmarks;
+    currentSlice = config.startSlice;
 
     // Size canvas to match its modal body (modal is in layout even when opacity:0)
     _resizeCanvas();
@@ -69,26 +63,26 @@ const CTViewer = (() => {
 
   /**
    * Moves the current slice by `count` steps in `direction`.
-   * @param {'prev'|'next'} direction
+   * @param {'up'|'down'} direction
    * @param {number} count
    */
   function navigate(direction, count) {
     count = parseInt(count, 10) || 1;
-    if (direction === 'prev') {
-      currentSlice = Math.max(1, currentSlice - count);
-    } else {
+    if (direction === 'up') {
       currentSlice = Math.min(totalSlices, currentSlice + count);
+    } else {
+      currentSlice = Math.max(1, currentSlice - count);
     }
     _loadAndDraw(currentSlice);
   }
 
   /**
    * Jumps to the slice number corresponding to a named landmark.
-   * @param {string} landmark - must match a key in LANDMARKS
+   * @param {string} landmark - must match a configured landmark key
    */
   function jumpToLandmark(landmark) {
     const key = landmark.toLowerCase().replace(/ /g, '_');
-    const slice = LANDMARKS[key];
+    const slice = landmarks[key];
     if (!slice) {
       console.warn('CTViewer: unknown landmark', landmark);
       return;
@@ -98,7 +92,7 @@ const CTViewer = (() => {
   }
 
   /**
-   * Hides the CT modal.
+   * Hides the MRI modal.
    */
   function hide() {
     if (modal) { modal.classList.remove('visible'); window.ORION_relayoutModals?.(); }
@@ -108,18 +102,15 @@ const CTViewer = (() => {
   // ── Rendering ─────────────────────────────────────────────────────────────
 
   /**
-   * Constructs the GCS URL for a slice, loads it as an Image,
+   * Constructs the URL for a slice, loads it as an Image,
    * and draws it onto the canvas with semi-transparency.
    */
   function _loadAndDraw(sliceNum, landmarkLabel) {
     if (!canvas || !ctx) return;
 
-    // Zero-pad slice number to 3 digits: 1 → '001'
-    const padded = String(sliceNum).padStart(3, '0');
-    const url = `${gcsBase}/${ctPath}/${padded}.png`;
+    const url = `${slicesBase}/${String(sliceNum).padStart(pad, '0')}.png`;
 
     const img = new Image();
-    img.crossOrigin = 'anonymous';
 
     img.onload = () => {
       // Show tile FIRST — tiles-column expands instantly (no CSS transition),
@@ -146,7 +137,7 @@ const CTViewer = (() => {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = '#ef9a9a';
       ctx.font = '14px monospace';
-      ctx.fillText(`CT slice ${sliceNum} not found`, 20, 40);
+      ctx.fillText(`MRI slice ${sliceNum} not found`, 20, 40);
     };
 
     img.src = url;
@@ -162,7 +153,7 @@ const CTViewer = (() => {
     ctx.textBaseline = 'top';
 
     // Slice counter — top-right
-    const sliceText = `SLICE ${sliceNum} / ${totalSlices}`;
+    const sliceText = `MRI ${sliceNum} / ${totalSlices}`;
     const sliceW = ctx.measureText(sliceText).width;
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.fillRect(canvas.width - sliceW - pad * 2 - 4, pad - 4, sliceW + 8, 20);

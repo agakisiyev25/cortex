@@ -6,34 +6,20 @@
  * Responsibilities:
  *   1. Manages WebSocket connection lifecycle
  *   2. Starts audio I/O via bidi-demo AudioWorklet functions
- *   3. Starts surgical video frame capture (1 fps)
- *   4. Receives ADK event JSON from server, dispatches to display modules
+ *   3. Receives ADK event JSON from server, dispatches to display modules
  */
 
 import { startAudioPlayerWorklet } from './audio-player.js';
 import { startAudioRecorderWorklet, stopMicrophone } from './audio-recorder.js';
 
 // ── Configuration ──────────────────────────────────────────────────────────
-const CONFIG = Object.assign({
-  gcsBucket:     'orion-assets-2026',
-  ctPath:        'ct/case_demo_001',
-  ctTotalSlices: 133,
-  modelPath:     'models/lung_model.glb',
-  videoPaths:    [
-    'video/surgical_video.mp4',  // mmc6:  port_placement, inspection
-    'video/mmc11.mp4',           // mmc11: fissure → vascular → bronchial
-    'video/mmc12.mp4',           // mmc12: extraction → lymph nodes → closure
-  ],
-}, window.ORION_CONFIG || {});
-
-const GCS_BASE = `https://storage.googleapis.com/${CONFIG.gcsBucket}`;
+const CONFIG = Object.assign({ caseUrl: '/static/case/case.json' }, window.ORION_CONFIG || {});
 
 // ── DOM references ─────────────────────────────────────────────────────────
 const orionOrb         = document.getElementById('orion-orb');
 const orionStatusLabel = document.getElementById('orion-status-label');
 const routingLog       = document.getElementById('routing-log');
 const transcriptLog    = document.getElementById('transcript-log');
-const surgicalVideo    = document.getElementById('surgical-video');
 
 // ── Audio state ────────────────────────────────────────────────────────────
 let audioPlayerNode  = null;
@@ -42,16 +28,9 @@ let micStream        = null;
 let audioSuppressed  = false;  // true after barge-in — suppresses stale audio chunks
 let _lastSuppressTime = 0;     // timestamp of last barge-in (debounce unsuppress)
 
-// ── WebSocket / capture state ──────────────────────────────────────────────
+// ── WebSocket state ────────────────────────────────────────────────────────
 let ws                = null;
 let _autoReconnect    = false;  // set when server sends error — triggers reconnect on close
-let videoInterval     = null;
-let offscreenCtx      = null;
-let _latestVideoFrame = null;  // most recent JPEG dataURL from startVideoCapture
-
-// Expose to other modules (e.g. LogPanel.capturePhoto) so they can reuse the
-// already-captured frame without re-doing the canvas draw.
-window.ORION_getLatestFrame = () => _latestVideoFrame;
 
 // ── Transcript state ───────────────────────────────────────────────────────
 // Live API streams transcription word-by-word. Track the current in-progress
@@ -75,14 +54,6 @@ function updateAgentCard() {
   document.querySelectorAll('.agent-chip').forEach((chip) => {
     chip.classList.toggle('active', chip.dataset.agent === _activeAgent);
   });
-  // Vision mode: both surgical video and screen capture run only while Screen_Advisor is active
-  if (_activeAgent === 'Screen_Advisor') {
-    startVideoCapture();
-    if (ws && ws.readyState === WebSocket.OPEN) ScreenshareAgent.activate(ws);
-  } else {
-    stopVideoCapture();
-    ScreenshareAgent.deactivate();
-  }
 }
 
 function updateToolChip(toolName) {
@@ -113,66 +84,29 @@ orionOrb.addEventListener('click', () => {
   else connect();
 });
 
-// Screen share badge click → full teardown (user explicitly ending vision mode)
-const _ssBadge = document.getElementById('screenshare-badge');
-if (_ssBadge) {
-  _ssBadge.addEventListener('click', () => ScreenshareAgent.teardown());
-}
+const typedCommand = document.getElementById('typed-command');
+const typedInput = document.getElementById('typed-input');
+typedCommand.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const value = typedInput.value.trim();
+  if (!value) return;
 
-// screenshare:started fires once (first permission grant) — just update badge
-document.addEventListener('screenshare:started', () => {
-  if (_ssBadge) _ssBadge.classList.add('ss-active');
-  logRouting('Vision mode active — surgical video + screen capture streaming', 'turn');
-});
-// screenshare:stopped fires on full teardown (disconnect or browser stop button)
-document.addEventListener('screenshare:stopped', () => {
-  if (_ssBadge) _ssBadge.classList.remove('ss-active');
-  logRouting('Vision mode stopped.', 'turn');
-});
-document.addEventListener('screenshare:error', (e) => {
-  logRouting(`Screen capture unavailable: ${e.detail?.message || 'permission denied'}`, 'error');
-});
+  const send = () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'text', content: value }));
+    }
+  };
 
-// Sequential video playlist with 3-stage fallback per video:
-//   Stage 0 → local /static/ (dev: same-origin, canvas always works)
-//   Stage 1 → GCS + crossorigin="anonymous" (prod: canvas works when CORS configured)
-//   Stage 2 → GCS plain, no crossorigin (CORS not configured: video plays, no thumbnails)
-let currentVideoIndex = 0;
-
-(function loadVideo() {
-  let _stage = 0;
-
-  function playIndex(idx) {
-    currentVideoIndex = idx;
-    _stage = 0;
-    const path = CONFIG.videoPaths[idx];
-    surgicalVideo.removeAttribute('crossorigin');
-    surgicalVideo.src = `/static/${path}`;
+  if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+    connect();
   }
+  if (ws && ws.readyState === WebSocket.OPEN) send();
+  else if (ws) ws.addEventListener('open', send, { once: true });
 
-  surgicalVideo.addEventListener('error', function onVideoError() {
-    const path = CONFIG.videoPaths[currentVideoIndex];
-    _stage++;
-    if (_stage === 1) {
-      surgicalVideo.crossOrigin = 'anonymous';
-      surgicalVideo.src = `${GCS_BASE}/${path}`;
-    } else if (_stage === 2) {
-      surgicalVideo.removeAttribute('crossorigin');
-      surgicalVideo.load();
-    }
-    // Stage 3+: skip to next video if this one can't load at all
-    else if (_stage === 3 && CONFIG.videoPaths.length > 1) {
-      playIndex((currentVideoIndex + 1) % CONFIG.videoPaths.length);
-    }
-  });
-
-  surgicalVideo.addEventListener('ended', () => {
-    playIndex((currentVideoIndex + 1) % CONFIG.videoPaths.length);
-  });
-
-  playIndex(0);
-}());
-
+  _upsertTranscript('surgeon', value);
+  currentSurgeonEntry = null;
+  typedInput.value = '';
+});
 
 async function connect() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
@@ -183,7 +117,7 @@ async function connect() {
   const wsUrl     = `${protocol}://${window.location.host}/ws/${userId}/${sessionId}`;
 
   setStatus('connecting');
-  logRouting('Connecting to ORION server…', 'turn');
+  logRouting('Connecting to CorteX server…', 'turn');
 
   ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
@@ -205,15 +139,18 @@ async function connect() {
     }
 
     // Initialise display modules
+    const kase = await (await fetch(CONFIG.caseUrl)).json();
     CTViewer.init({
-      canvasId:    'ct-canvas',
-      gcsBase:     GCS_BASE,
-      ctPath:      CONFIG.ctPath,
-      totalSlices: CONFIG.ctTotalSlices,
+      canvasId: 'ct-canvas',
+      slicesBase: kase.slices.base_url,
+      totalSlices: kase.slices.count,
+      pad: kase.slices.pad,
+      landmarks: kase.landmarks,
+      startSlice: kase.landmarks.tumor,
     });
     Anatomy3D.init({
       canvasId: 'ar-canvas',
-      modelUrl: `${GCS_BASE}/${CONFIG.modelPath}`,
+      modelUrl: kase.model_url,
     });
     ClinicalPanel.init({ modalId: 'clinical-modal', bodyId: 'vitals-body' });
     ChecklistPanel.init({ modalId: 'checklist-modal', bodyId: 'checklist-body' });
@@ -240,8 +177,6 @@ async function connect() {
       const countEl = chip.querySelector('.tool-chip-count');
       if (countEl) countEl.textContent = '';
     });
-    stopVideoCapture();
-    ScreenshareAgent.teardown();
     if (micStream) { stopMicrophone(micStream); micStream = null; }
     if (audioRecorderCtx) {         // close recorder AudioContext — prevents browser limit (~6) being hit on repeated reconnects
       try { audioRecorderCtx.close(); } catch (_) {}
@@ -309,35 +244,6 @@ function base64ToArray(base64) {
 }
 
 
-// ── Video frame capture ────────────────────────────────────────────────────
-
-function startVideoCapture() {
-  const offscreen = document.createElement('canvas');
-  offscreen.width = 320; offscreen.height = 240;
-  offscreenCtx = offscreen.getContext('2d');
-
-  videoInterval = setInterval(() => {
-    if (surgicalVideo.readyState < 2) return;
-    try {
-      offscreenCtx.drawImage(surgicalVideo, 0, 0, 320, 240);
-      const b64 = offscreen.toDataURL('image/jpeg', 0.6);
-      _latestVideoFrame = b64;  // stored for photo capture via ORION_getLatestFrame
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify({ type: 'image_frame', data: b64 }));
-    } catch (e) {
-      // Cross-origin taint: GCS video without CORS headers.
-      // Video plays normally; canvas capture is blocked until CORS is configured
-      // on the GCS bucket: gsutil cors set cors.json gs://orion-assets-2026
-    }
-  }, 1000);
-}
-
-function stopVideoCapture() {
-  clearInterval(videoInterval);
-  videoInterval = null;
-}
-
-
 // ── Server event handling ──────────────────────────────────────────────────
 
 /**
@@ -389,7 +295,7 @@ function handleServerEvent(jsonString) {
       _activeAgent = event.author;
       updateAgentCard();
     }
-    if (event.author !== 'ORION_Orchestrator') {
+    if (event.author !== 'CORTEX') {
       logRouting(`→ ${event.author}`, 'transfer');
     }
   }
@@ -466,13 +372,13 @@ function dispatchRenderCommand(toolName, args) {
     case 'hide_patient_data':
       ClinicalPanel.hide();
       break;
-    case 'navigate_ct':
+    case 'navigate_scan':
       CTViewer.navigate(args.direction, args.count || 1);
       break;
     case 'jump_to_landmark':
       CTViewer.jumpToLandmark(args.landmark);
       break;
-    case 'hide_ct':
+    case 'hide_scan':
       CTViewer.hide();
       break;
     case 'rotate_model':
@@ -490,8 +396,6 @@ function dispatchRenderCommand(toolName, args) {
       break;
     case 'log_event':
       // no loading state — result arrives immediately in handleFunctionResponse
-      break;
-    case 'capture_surgical_photo':
       break;
     case 'show_event_log':
       break;
@@ -521,17 +425,9 @@ function handleFunctionResponse(fr) {
   if (!cmd) return;
   if (cmd.layer === 'clinical' && cmd.action === 'show') {
     const d = cmd.data;
-    if (cmd.field === 'ebl' && d) {
-      const note = d.alert || '';
-      ClinicalPanel.show('ebl', 'Est. Blood Loss', `${d.total_ml} mL (${d.pct}% BV)`, note);
-    } else if (cmd.field === 'drug_check' && d) {
+    if (cmd.field === 'drug_check' && d) {
       const label = d.status === 'safe' ? 'DRUG: SAFE' : 'DRUG: CAUTION';
       ClinicalPanel.show('drug_check', label, d.drug, d.summary);
-    } else if (cmd.field === 'complication_protocol' && d) {
-      const steps = (d.steps || []).join(' → ');
-      ClinicalPanel.show('complication', 'COMPLICATION', d.type, steps);
-    } else if (cmd.field === 'anatomy_context' && d) {
-      ClinicalPanel.show('anatomy', 'ANATOMY', d.phase || '', d.pearl || '');
     } else {
       ClinicalPanel.show(cmd.field, cmd.label, cmd.value, cmd.note);
     }
@@ -573,7 +469,6 @@ function handleFunctionResponse(fr) {
     ChecklistPanel.hide(); LogPanel.hide(); SummaryPanel.hide();
     relayoutTiles();
   }
-  // screenshare layer actions are now system-managed via updateAgentCard()
 }
 
 
@@ -633,7 +528,7 @@ function setStatus(state) {
       }, 1600);
       break;
     default: // inactive / offline
-      orionStatusLabel.textContent = 'ORION offline. Tap to wake.';
+      orionStatusLabel.textContent = 'CorteX offline. Tap to wake.';
   }
 }
 
@@ -668,7 +563,7 @@ function _upsertTranscript(speaker, text) {
     const entry = document.createElement('div');
     entry.className = `transcript-entry ${speaker}`;
     entry.innerHTML = `
-      <div class="speaker">${isSurgeon ? 'Surgeon' : 'ORION'}</div>
+      <div class="speaker">${isSurgeon ? 'Surgeon' : 'CorteX'}</div>
       <div class="text">${escapeHtml(text)}</div>`;
     transcriptLog.appendChild(entry);
     // Trim history
