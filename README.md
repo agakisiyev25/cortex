@@ -13,13 +13,14 @@ cd app && uvicorn main:app --port 8080
 
 Open http://localhost:8080.
 
-## Build a real case
+## Rebuild with a model prediction
 
 ```bash
 python scripts/build_case.py \
-  --image <t1c.nii.gz> \
-  --mask <our_model_prediction.nii.gz> \
-  --out app/static/case
+  --image data/real/PatientID_0006_Timepoint_6_brain_t1c.nii.gz \
+  --mask <prediction.nii.gz> \
+  --out app/static/case --case-id PT-0006-T6 \
+  --mask-source "CorteX nnU-Net prediction" --modality T1c
 ```
 
 The mask must be our segmentation model's prediction. If the trained model uses different label numbering, pass `--labels` with names and numbers matching those used when the model was trained.

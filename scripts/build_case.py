@@ -13,7 +13,9 @@ import numpy as np
 import trimesh
 from PIL import Image, ImageDraw, ImageFont
 from scipy import ndimage
-from skimage import filters, measure
+from skimage import filters
+
+from meshing import clean_brain_mask, mask_to_mesh
 
 
 DEFAULT_LABELS = (
@@ -31,13 +33,28 @@ STRUCTURE_ORDER = [
     "edema",
     "resection_cavity",
 ]
-COLOURS = {
-    "brain": (201, 210, 218),
-    "enhancing_tumor": (226, 87, 76),
-    "non_enhancing_core": (140, 132, 230),
-    "edema": (224, 163, 59),
-    "resection_cavity": (111, 168, 220),
+COLORS = {
+    "brain": "#C9D2DA",
+    "non_enhancing_core": "#F2C200",
+    "edema": "#2FA84F",
+    "enhancing_tumor": "#E0332B",
+    "resection_cavity": "#2F7DE1",
 }
+DISPLAY_NAMES = {
+    "brain": "Brain",
+    "non_enhancing_core": "Necrotic core",
+    "edema": "Edema",
+    "enhancing_tumor": "Enhancing tumor",
+    "resection_cavity": "Resection cavity",
+}
+
+
+def hex_to_rgb(value: str) -> tuple[int, int, int]:
+    value = value.lstrip("#")
+    return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+
+
+COLOURS = {name: hex_to_rgb(value) for name, value in COLORS.items()}
 
 
 def parse_labels(value: str) -> dict[int, str]:
@@ -127,6 +144,8 @@ def write_slices(
     label_map: dict[int, str],
     voxel_sizes: tuple[float, ...],
     out_dir: Path,
+    slice_start: int,
+    slice_end: int,
 ) -> int:
     slices_dir = out_dir / "slices"
     slices_dir.mkdir(parents=True)
@@ -141,7 +160,7 @@ def write_slices(
     )
     font = ImageFont.load_default()
 
-    for k in range(nz):
+    for output_index, k in enumerate(range(slice_start, slice_end + 1), start=1):
         sl = grey[:, :, k]
         segmentation = mask_data[:, :, k]
         disp = np.flipud(sl.T)[:, ::-1]
@@ -151,7 +170,9 @@ def write_slices(
             selected = mask_disp == label
             if selected.any():
                 colour = np.asarray(COLOURS[name], dtype=np.float32)
-                rgb[selected] = rgb[selected] * 0.55 + colour * 0.45
+                rgb[selected] = rgb[selected] * 0.60 + colour * 0.40
+                outline = selected & ~ndimage.binary_erosion(selected)
+                rgb[outline] = colour
 
         image = Image.fromarray(np.rint(rgb).astype(np.uint8), mode="RGB")
         image = image.resize(output_size, Image.Resampling.LANCZOS)
@@ -164,8 +185,8 @@ def write_slices(
             fill=(255, 255, 255),
             font=font,
         )
-        image.save(slices_dir / f"{k + 1:03d}.png")
-    return nz
+        image.save(slices_dir / f"{output_index:03d}.png")
+    return slice_end - slice_start + 1
 
 
 def largest_area_slice(mask: np.ndarray, labels: list[int]) -> int | None:
@@ -181,12 +202,13 @@ def compute_landmarks(
     mask_data: np.ndarray,
     brain_mask: np.ndarray,
     label_map: dict[int, str],
+    slice_start: int,
 ) -> dict[str, int]:
     labels_by_name = {name: label for label, name in label_map.items()}
     brain_slices = np.flatnonzero(np.any(brain_mask, axis=(0, 1)))
     if brain_slices.size == 0:
         raise ValueError("brain mask is empty")
-    mid_brain = int((brain_slices[0] + brain_slices[-1]) // 2) + 1
+    mid_brain = int((brain_slices[0] + brain_slices[-1]) // 2) + 1 - slice_start
 
     tumor_labels = [
         labels_by_name[name]
@@ -194,8 +216,12 @@ def compute_landmarks(
         if name in labels_by_name
     ]
     tumor = largest_area_slice(mask_data, tumor_labels)
+    if tumor is not None:
+        tumor -= slice_start
     if tumor is None and "edema" in labels_by_name:
         tumor = largest_area_slice(mask_data, [labels_by_name["edema"]])
+        if tumor is not None:
+            tumor -= slice_start
     if tumor is None:
         tumor = mid_brain
 
@@ -206,8 +232,8 @@ def compute_landmarks(
         np.any(np.isin(mask_data, non_cavity_labels), axis=(0, 1))
     )
     if tumor_extent.size:
-        tumor_bottom = int(tumor_extent[0]) + 1
-        tumor_top = int(tumor_extent[-1]) + 1
+        tumor_bottom = int(tumor_extent[0]) + 1 - slice_start
+        tumor_top = int(tumor_extent[-1]) + 1 - slice_start
     else:
         tumor_bottom = tumor
         tumor_top = tumor
@@ -222,31 +248,26 @@ def compute_landmarks(
     if cavity_label is not None and np.any(mask_data == cavity_label):
         cavity = largest_area_slice(mask_data, [cavity_label])
         if cavity is not None:
-            landmarks["resection_cavity"] = cavity
+            landmarks["resection_cavity"] = cavity - slice_start
     return landmarks
 
 
-def add_mesh(
-    scene: trimesh.Scene,
-    name: str,
-    binary_mask: np.ndarray,
-    affine: np.ndarray,
-    step_size: int,
-) -> None:
-    smooth = ndimage.gaussian_filter(binary_mask.astype(np.float32), sigma=1.0)
-    vertices, faces, _normals, _values = measure.marching_cubes(
-        smooth, level=0.5, step_size=step_size
-    )
-    ras = nib.affines.apply_affine(affine, vertices)
-    three = np.column_stack((-ras[:, 0], ras[:, 2], ras[:, 1]))
+def add_mesh(scene: trimesh.Scene, name: str, source: trimesh.Trimesh) -> None:
+    vertices = np.asarray(source.vertices)
+    three = np.column_stack((-vertices[:, 0], vertices[:, 2], vertices[:, 1]))
     red, green, blue = COLOURS[name]
     material = trimesh.visual.material.PBRMaterial(
         baseColorFactor=[red, green, blue, 255],
         metallicFactor=0.0,
-        roughnessFactor=0.8,
+        roughnessFactor=0.7,
     )
     visual = trimesh.visual.TextureVisuals(material=material)
-    mesh = trimesh.Trimesh(vertices=three, faces=faces, visual=visual, process=False)
+    mesh = trimesh.Trimesh(
+        vertices=three,
+        faces=np.asarray(source.faces),
+        visual=visual,
+        process=False,
+    )
     scene.add_geometry(mesh, node_name=name, geom_name=name)
 
 
@@ -258,19 +279,55 @@ def write_model(
     out_dir: Path,
 ) -> None:
     scene = trimesh.Scene()
-    add_mesh(scene, "brain", brain_mask, affine, step_size=2)
+    brain_mesh = mask_to_mesh(
+        clean_brain_mask(brain_mask),
+        affine,
+        smooth_iterations=20,
+        target_faces=80000,
+    )
+    if brain_mesh is None:
+        raise ValueError("brain mask is empty")
+    add_mesh(scene, "brain", brain_mesh)
     labels_by_name = {name: label for label, name in label_map.items()}
     for name in STRUCTURE_ORDER:
         label = labels_by_name.get(name)
         if label is None:
             continue
         binary = mask_data == label
-        if np.count_nonzero(binary) < 50:
+        if not np.any(binary):
             continue
-        add_mesh(scene, name, binary, affine, step_size=1)
+        label_mesh = mask_to_mesh(
+            binary,
+            affine,
+            smooth_iterations=10,
+            target_faces=30000,
+        )
+        if label_mesh is not None:
+            add_mesh(scene, name, label_mesh)
     scene.export(out_dir / "model.glb")
     check = trimesh.load(out_dir / "model.glb")
     print("GLB geometries:", ", ".join(check.geometry.keys()))
+
+
+def compute_tumor_side(
+    mask_data: np.ndarray,
+    label_map: dict[int, str],
+    affine: np.ndarray,
+) -> str:
+    labels_by_name = {name: label for label, name in label_map.items()}
+    primary_labels = [
+        labels_by_name[name]
+        for name in ("non_enhancing_core", "edema", "enhancing_tumor")
+        if name in labels_by_name
+    ]
+    selected = np.isin(mask_data, primary_labels)
+    if not selected.any() and "resection_cavity" in labels_by_name:
+        selected = mask_data == labels_by_name["resection_cavity"]
+    if not selected.any():
+        return "right"
+    centroid_voxel = np.argwhere(selected).mean(axis=0)
+    centroid_ras = nib.affines.apply_affine(affine, centroid_voxel)
+    return "right" if centroid_ras[0] > 0 else "left"
 
 
 def build_case(args: argparse.Namespace) -> None:
@@ -300,14 +357,22 @@ def build_case(args: argparse.Namespace) -> None:
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from exc
 
+    brain_slices = np.flatnonzero(np.any(brain_mask, axis=(0, 1)))
+    if brain_slices.size == 0:
+        raise SystemExit("error: brain mask is empty")
+    slice_start = max(0, int(brain_slices[0]) - 2)
+    slice_end = min(image.shape[2] - 1, int(brain_slices[-1]) + 2)
+
     slice_count = write_slices(
         image_data,
         mask_data,
         label_map,
         image.header.get_zooms(),
         args.out,
+        slice_start,
+        slice_end,
     )
-    landmarks = compute_landmarks(mask_data, brain_mask, label_map)
+    landmarks = compute_landmarks(mask_data, brain_mask, label_map, slice_start)
 
     voxel_volume = float(np.prod(image.header.get_zooms()[:3]))
     labels_by_name = {name: label for label, name in label_map.items()}
@@ -327,6 +392,11 @@ def build_case(args: argparse.Namespace) -> None:
     except ValueError as exc:
         raise SystemExit(f"error: could not build model: {exc}") from exc
 
+    tumor_side = compute_tumor_side(mask_data, label_map, image.affine)
+    default_view = {"x": 15, "y": 35 if tumor_side == "right" else -35}
+    print("Volumes (cm³):", json.dumps(volumes, sort_keys=True))
+    print("Tumor side:", tumor_side)
+
     case = {
         "case_id": args.case_id,
         "source": {
@@ -345,6 +415,12 @@ def build_case(args: argparse.Namespace) -> None:
         "volumes_cm3": volumes,
         "structures": structures,
         "model_url": "/static/case/model.glb",
+        "tumor_side": tumor_side,
+        "default_view": default_view,
+        "mask_source": args.mask_source,
+        "modality": args.modality,
+        "display_names": DISPLAY_NAMES,
+        "colors": COLORS,
     }
     (args.out / "case.json").write_text(
         json.dumps(case, indent=2) + "\n", encoding="utf-8"
@@ -359,6 +435,8 @@ def main() -> None:
     parser.add_argument("--labels", default=DEFAULT_LABELS)
     parser.add_argument("--case-id", default="CASE-001")
     parser.add_argument("--brain-mask", type=Path)
+    parser.add_argument("--mask-source", default="CorteX segmentation")
+    parser.add_argument("--modality", default="T1c")
     args = parser.parse_args()
     build_case(args)
 

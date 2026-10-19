@@ -1,8 +1,8 @@
 {
-  "case_id": "CASE-001",
+  "case_id": "PT-0006-T6",
   "source": {
-    "image": "image.nii.gz",
-    "mask": "mask.nii.gz",
+    "image": "PatientID_0006_Timepoint_6_brain_t1c.nii.gz",
+    "mask": "PatientID_0006_Timepoint_6_tumorMask.nii.gz",
     "label_map": {
       "1": "non_enhancing_core",
       "2": "edema",
@@ -11,24 +11,24 @@
     }
   },
   "slices": {
-    "count": 160,
+    "count": 144,
     "base_url": "/static/case/slices",
     "pad": 3,
     "plane": "axial",
     "order": "inferior_to_superior"
   },
   "landmarks": {
-    "tumor": 96,
-    "tumor_top": 120,
-    "tumor_bottom": 72,
-    "mid_brain": 81,
-    "resection_cavity": 96
+    "tumor": 82,
+    "tumor_top": 128,
+    "tumor_bottom": 38,
+    "mid_brain": 72,
+    "resection_cavity": 50
   },
   "volumes_cm3": {
-    "enhancing_tumor": 8.4,
-    "non_enhancing_core": 3.1,
-    "edema": 45.7,
-    "resection_cavity": 1.0
+    "enhancing_tumor": 18.8,
+    "non_enhancing_core": 0.3,
+    "edema": 77.7,
+    "resection_cavity": 22.4
   },
   "structures": [
     "brain",
@@ -37,5 +37,26 @@
     "edema",
     "resection_cavity"
   ],
-  "model_url": "/static/case/model.glb"
+  "model_url": "/static/case/model.glb",
+  "tumor_side": "left",
+  "default_view": {
+    "x": 15,
+    "y": -35
+  },
+  "mask_source": "Reference segmentation (MU-Glioma-Post)",
+  "modality": "T1c",
+  "display_names": {
+    "brain": "Brain",
+    "non_enhancing_core": "Necrotic core",
+    "edema": "Edema",
+    "enhancing_tumor": "Enhancing tumor",
+    "resection_cavity": "Resection cavity"
+  },
+  "colors": {
+    "brain": "#C9D2DA",
+    "non_enhancing_core": "#F2C200",
+    "edema": "#2FA84F",
+    "enhancing_tumor": "#E0332B",
+    "resection_cavity": "#2F7DE1"
+  }
 }

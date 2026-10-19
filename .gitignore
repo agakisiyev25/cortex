@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .venv/
+*.nii
+*.nii.gz
 data/
 ui_snapshots/
 node_modules/

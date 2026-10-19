@@ -4,6 +4,7 @@ scipy
 nibabel==5.4.2
 scikit-image==0.26.0
 trimesh==5.1.1
+fast-simplification==0.1.9
 Pillow
 pytest
 websockets
