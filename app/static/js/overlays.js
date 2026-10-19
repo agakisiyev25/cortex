@@ -10,6 +10,7 @@ const _overlayEscape = (value) => String(value ?? '')
 
 const Drawer = (() => {
   let root = null;
+  let inner = null;
   let caseData = null;
   let logEntries = [];
   const cards = new Map();
@@ -38,7 +39,12 @@ const Drawer = (() => {
 
   function init(kase) {
     root = document.getElementById('drawer');
+    inner = root.querySelector('.drawer-inner');
     caseData = kase;
+  }
+
+  function _syncOpen() {
+    root.classList.toggle('open', inner.children.length > 0);
   }
 
   function _card(kind, title, accent, bodyHtml) {
@@ -58,15 +64,16 @@ const Drawer = (() => {
     if (existing) {
       existing.replaceWith(card);
     } else {
-      root.prepend(card);
+      inner.prepend(card);
     }
     cards.set(kind, card);
 
-    while (root.children.length > 3) {
-      const oldest = root.lastElementChild;
+    while (inner.children.length > 3) {
+      const oldest = inner.lastElementChild;
       cards.delete(oldest.dataset.kind);
       oldest.remove();
     }
+    _syncOpen();
   }
 
   function showPatient(fields, single = false) {
@@ -84,7 +91,7 @@ const Drawer = (() => {
     _card(
       'patient',
       'Patient data',
-      'var(--accent)',
+      'var(--voice)',
       single ? rows : `<div class="patient-grid">${rows}</div>`,
     );
   }
@@ -106,7 +113,7 @@ const Drawer = (() => {
     const body = `${rows}
       <div class="volume-total"><span></span><span>Total tumor regions</span><span class="volume-value">${total.toFixed(1)} cm³</span></div>
       <div class="source-note">${_overlayEscape(sourceNote)}</div>`;
-    _card('volumes', 'Tumor volumes', 'var(--accent)', body);
+    _card('volumes', 'Tumor volumes', 'var(--voice)', body);
   }
 
   function showChecklist(command) {
@@ -118,7 +125,7 @@ const Drawer = (() => {
     _card(
       'checklist',
       'Procedure checklist',
-      'var(--amber)',
+      'var(--warn)',
       `<div class="checklist-name">${_overlayEscape(command.label)}</div>${items}${warning}`,
     );
   }
@@ -148,11 +155,13 @@ const Drawer = (() => {
   function remove(kind) {
     cards.get(kind)?.remove();
     cards.delete(kind);
+    _syncOpen();
   }
 
   function clear() {
-    root.replaceChildren();
+    inner.replaceChildren();
     cards.clear();
+    _syncOpen();
   }
 
   return { init, showPatient, showVolumes, showChecklist, showLog, appendLog, remove, clear };
@@ -164,7 +173,7 @@ const Banner = (() => {
   let timer = null;
 
   function init() {
-    root = document.getElementById('banner');
+    root = document.getElementById('banner-slot');
   }
 
   function show(response) {
@@ -192,7 +201,7 @@ const Modal = (() => {
   let root = null;
 
   function init() {
-    root = document.getElementById('summary-modal');
+    root = document.getElementById('modal-slot');
     root.addEventListener('click', (event) => {
       if (event.target === root) hide();
     });

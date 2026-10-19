@@ -51,7 +51,7 @@ async function initialisePage() {
   caseData = payload.case;
   patientData = payload.patient;
 
-  document.getElementById('case-id').textContent = `Case ${caseData.case_id}`;
+  document.getElementById('case-id').textContent = caseData.case_id;
   document.getElementById('case-procedure').textContent = patientData.procedure.value;
   const allergies = patientData.allergies.value.replace(/\s*\([^)]*\)/g, '');
   document.getElementById('allergy-chip').textContent = `Allergies: ${allergies}`;
@@ -423,15 +423,15 @@ function setStatus(state) {
   };
   orionStatusLabel.textContent = labels[state] || labels.offline;
 
-  liveStatus.className = 'status-pill';
+  liveStatus.dataset.state = 'offline';
   if (state === 'demo') {
-    liveStatus.classList.add('demo'); liveStatusText.textContent = 'DEMO';
+    liveStatus.dataset.state = 'demo'; liveStatusText.textContent = 'Demo';
   } else if (state === 'connecting') {
-    liveStatus.classList.add('connecting'); liveStatusText.textContent = 'CONNECTING';
+    liveStatus.dataset.state = 'connecting'; liveStatusText.textContent = 'Connecting';
   } else if (connected) {
-    liveStatus.classList.add('live'); liveStatusText.textContent = 'LIVE';
+    liveStatus.dataset.state = 'live'; liveStatusText.textContent = 'Live';
   } else {
-    liveStatus.classList.add('offline'); liveStatusText.textContent = 'OFFLINE';
+    liveStatusText.textContent = 'Offline';
   }
 }
 

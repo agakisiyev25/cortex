@@ -5,27 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CorteX — Voice OR Co-Pilot</title>
   <link rel="icon" href="data:,">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/atkinson-hyperlegible-next@5.3.0/index.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/atkinson-hyperlegible-mono@5.3.0/index.css">
   <link rel="stylesheet" href="/static/css/cortex.css">
 </head>
 <body>
   <div id="app">
-    <header id="top-bar">
+    <header id="topbar">
       <div class="brand">CorteX</div>
-      <div id="case-strip" aria-label="Current case">
-        <span id="case-id">Case —</span><span class="case-divider">·</span>
-        <span id="case-procedure">Loading patient record…</span><span class="case-divider">·</span>
-        <span id="allergy-chip">Allergies: —</span>
+      <div class="case" aria-label="Current case">
+        <span id="case-id" class="case-id">—</span>
+        <span id="case-procedure" class="case-proc">Loading patient record…</span>
+        <span id="allergy-chip" class="chip chip-alarm">Allergies: —</span>
       </div>
-      <div id="live-status" class="status-pill offline"><span class="status-dot"></span><span id="live-status-text">OFFLINE</span></div>
-      <time id="session-timer">00:00</time>
-      <div class="prototype-note">Research prototype · not for clinical use</div>
+      <div class="session">
+        <span id="live-status" class="status" data-state="offline"><i></i><b id="live-status-text">Offline</b></span>
+        <time id="session-timer" class="timer">00:00</time>
+        <span class="disclaimer">Research prototype, not for clinical use</span>
+      </div>
     </header>
 
     <main id="viewers">
-      <section id="mri-panel" class="viewer-panel" aria-label="MRI viewer">
+      <section id="mri-panel" class="well viewer-panel" aria-label="MRI viewer">
         <header class="panel-header">
           <div id="mri-title" class="panel-title">MRI · T1c · Axial</div>
           <div class="panel-meta-group">
@@ -41,7 +42,7 @@
         <div class="viewer-placeholder">MRI hidden</div>
       </section>
 
-      <section id="ar-panel" class="viewer-panel" aria-label="3D patient model">
+      <section id="ar-panel" class="well well-3d viewer-panel" aria-label="3D patient model">
         <header class="panel-header">
           <div class="panel-title">3D · Patient-specific model</div>
           <span id="ar-view-name" class="panel-meta">Default</span>
@@ -51,12 +52,12 @@
         <div class="viewer-placeholder">3D model hidden</div>
       </section>
 
-      <div id="drawer" aria-live="polite"></div>
-      <div id="banner" aria-live="assertive"></div>
-      <div id="summary-modal" aria-live="polite"></div>
+      <aside id="drawer" aria-label="Details" aria-live="polite"><div class="drawer-inner"></div></aside>
+      <div id="banner-slot" aria-live="assertive"></div>
+      <div id="modal-slot" aria-live="polite"></div>
     </main>
 
-    <aside id="right-rail">
+    <aside id="rail">
       <section id="orb-section">
         <button id="orion-orb" class="orb offline" type="button" aria-label="Connect to CorteX">
           <span class="orb-core"></span><span class="orb-ripple"></span>
