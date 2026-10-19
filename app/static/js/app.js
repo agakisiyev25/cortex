@@ -26,7 +26,6 @@ let audioPlayerNode = null;
 let audioRecorderCtx = null;
 let micStream = null;
 let audioSuppressed = false;
-let _lastSuppressTime = 0;
 let ws = null;
 let _autoReconnect = false;
 let currentOrionEntry = null;
@@ -120,6 +119,7 @@ async function connect() {
 
   ws.onclose = () => {
     talking = false;
+    audioSuppressed = false;
     _dispatchedTools.clear();
     pendingActions.forEach((items) => items.forEach((item) => clearTimeout(item.timer)));
     pendingActions.clear();
@@ -158,8 +158,7 @@ function disconnect() {
 
 function _bargeIn() {
   if (audioSuppressed) return;
-  audioSuppressed = true;
-  _lastSuppressTime = Date.now();
+  audioSuppressed = talking && !handsFree;
   if (audioPlayerNode) audioPlayerNode.port.postMessage({ command: 'endOfAudio' });
   _finishTranscript(currentOrionEntry);
   currentOrionEntry = null;
@@ -183,8 +182,8 @@ function audioRecorderHandler(pcmData) {
 
 function startTalking() {
   if (handsFree || talking || ws?.readyState !== WebSocket.OPEN) return;
-  _bargeIn();
   talking = true;
+  _bargeIn();
   clearTimeout(thinkingTimer);
   setStatus('talking');
 }
@@ -196,6 +195,7 @@ function stopTalking() {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'audio_stream_end' }));
   }
+  audioSuppressed = false;
   setStatus('thinking');
   clearTimeout(thinkingTimer);
   thinkingTimer = setTimeout(() => {
@@ -238,7 +238,6 @@ function handleServerEvent(jsonString) {
 
   const outputText = event.outputTranscription?.text ?? event.output_transcription?.text;
   if (outputText) {
-    if (Date.now() - _lastSuppressTime > 300) audioSuppressed = false;
     _markSpeaking();
     _upsertTranscript('orion', outputText);
   }
@@ -537,7 +536,13 @@ voiceTrace.addEventListener('pointerdown', (event) => {
   }
 });
 voiceTrace.addEventListener('pointerup', stopTalking);
-voiceTrace.addEventListener('pointercancel', stopTalking);
+voiceTrace.addEventListener('pointercancel', () => { if (talking) stopTalking(); });
+voiceTrace.addEventListener('lostpointercapture', () => { if (talking) stopTalking(); });
+
+window.addEventListener('blur', () => { if (talking) stopTalking(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && talking) stopTalking();
+});
 
 document.addEventListener('keydown', (event) => {
   if (event.code !== 'Space' || event.repeat || handsFree || document.activeElement === typedInput) return;
