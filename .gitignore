@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .venv/
 data/
+ui_snapshots/
+node_modules/
 .pytest_cache/
 .adk/
 *.db
