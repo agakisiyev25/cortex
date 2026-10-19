@@ -17,6 +17,7 @@ const Anatomy3D = (() => {
   let legendOrder = [];
   let displayNames = {};
   let colors = {};
+  let modelRadius = 0;
   const structures = {};
 
   function init(config) {
@@ -31,6 +32,9 @@ const Anatomy3D = (() => {
     renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setClearColor(0x000000, 0);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
 
     scene = new THREE.Scene();
     camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
@@ -41,12 +45,12 @@ const Anatomy3D = (() => {
     controls.enablePan = false;
     controls.addEventListener('start', () => _setViewName('Custom'));
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x223040, 0.9));
-    const key = new THREE.DirectionalLight(0xffffff, 0.8);
+    scene.add(new THREE.HemisphereLight(0xE8F4F2, 0x0A1413, 0.75));
+    const key = new THREE.DirectionalLight(0xffffff, 1.1);
     key.position.set(3, 5, 4);
     scene.add(key);
-    const rim = new THREE.DirectionalLight(0x88ccff, 0.35);
-    rim.position.set(-4, 2, -3);
+    const rim = new THREE.DirectionalLight(0x7FE9DA, 0.6);
+    rim.position.set(-4, 2, -5);
     scene.add(rim);
 
     _resize();
@@ -63,55 +67,52 @@ const Anatomy3D = (() => {
       (gltf) => {
         const content = gltf.scene;
         const rawBox = new THREE.Box3().setFromObject(content);
-        const rawSize = rawBox.getSize(new THREE.Vector3());
-        const maxDimension = Math.max(rawSize.x, rawSize.y, rawSize.z);
-        content.scale.setScalar(2 / maxDimension);
-
-        const scaledBox = new THREE.Box3().setFromObject(content);
-        const centre = scaledBox.getCenter(new THREE.Vector3());
+        const centre = rawBox.getCenter(new THREE.Vector3());
         content.position.sub(centre);
 
         model = new THREE.Group();
         model.add(content);
         scene.add(model);
 
-        const fittedBox = new THREE.Box3().setFromObject(content);
-        const fittedSize = fittedBox.getSize(new THREE.Vector3());
-        const fittedMax = Math.max(fittedSize.x, fittedSize.y, fittedSize.z);
-        const cameraDistance = fittedMax / (2 * Math.tan(THREE.MathUtils.degToRad(22.5)));
-        camera.position.set(0, 0, cameraDistance * 1.35);
-        camera.near = cameraDistance * 0.01;
-        camera.far = cameraDistance * 10;
-        camera.lookAt(0, 0, 0);
-        camera.updateProjectionMatrix();
-        controls.target.set(0, 0, 0);
-        controls.update();
-        controls.saveState();
-
         content.traverse((child) => {
-          if (!child.isMesh || !child.material) return;
-          child.material.side = THREE.DoubleSide;
-          child.material.transparent = false;
-          child.material.opacity = 1;
-          child.material.depthWrite = true;
-          child.renderOrder = 0;
-          if (child.name.toLowerCase() === 'edema') {
+          if (!child.isMesh) return;
+          const name = child.name.toLowerCase();
+          if (name === 'brain') {
+            if (!child.geometry.getAttribute('normal')) child.geometry.computeVertexNormals();
+            child.material = new THREE.ShaderMaterial({
+              uniforms: { uColor: { value: new THREE.Color('#C9D2DA') }, uBase: { value: 0.04 }, uRim: { value: 0.6 }, uPower: { value: 2.2 } },
+              vertexShader: 'varying vec3 vN; varying vec3 vV; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+              fragmentShader: 'uniform vec3 uColor; uniform float uBase; uniform float uRim; uniform float uPower; varying vec3 vN; varying vec3 vV; void main() { float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uPower); gl_FragColor = vec4(uColor, uBase + uRim * f); }',
+              transparent: true,
+              depthWrite: false,
+            });
+            child.renderOrder = 2;
+          } else {
+            const color = new THREE.Color(colors[name] || '#C9D2DA').convertSRGBToLinear();
+            child.material = new THREE.MeshStandardMaterial({
+              color,
+              roughness: 0.42,
+              metalness: 0,
+              emissive: color,
+              emissiveIntensity: name === 'enhancing_tumor' ? 0.15 : 0.08,
+            });
+            child.renderOrder = 0;
+          }
+          if (name === 'edema') {
             child.material.transparent = true;
             child.material.opacity = 0.35;
             child.material.depthWrite = false;
             child.renderOrder = 1;
           }
-          if (child.name.toLowerCase() === 'brain') {
-            child.material.transparent = true;
-            child.material.opacity = 0.14;
-            child.material.depthWrite = false;
-            child.renderOrder = 2;
-          }
           child.material.needsUpdate = true;
-          structures[child.name.toLowerCase()] = child;
+          structures[name] = child;
         });
 
         _applyDefaultRotation();
+        modelRadius = new THREE.Box3().setFromObject(model).getBoundingSphere(new THREE.Sphere()).radius;
+        controls.target.set(0, 0, 0);
+        _fitCamera();
+        controls.saveState();
         _renderLegend();
         _setViewName('Default');
         canvas.dataset.ready = 'true';
@@ -129,6 +130,24 @@ const Anatomy3D = (() => {
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    if (modelRadius) _fitCamera();
+  }
+
+  function _fitCamera() {
+    if (!modelRadius || !camera || !controls || !container) return;
+    const width = Math.max(1, container.clientWidth);
+    const height = Math.max(1, container.clientHeight);
+    const direction = camera.position.clone().sub(controls.target);
+    if (!direction.lengthSq()) direction.set(0, 0, 1);
+    direction.normalize();
+    const vf = THREE.MathUtils.degToRad(camera.fov / 2);
+    const hf = Math.atan(Math.tan(vf) * (width / height));
+    const distance = modelRadius * 1.18 / Math.sin(Math.min(vf, hf));
+    camera.position.copy(controls.target).addScaledVector(direction, distance);
+    camera.near = Math.max(0.01, distance - modelRadius * 2.5);
+    camera.far = distance + modelRadius * 4;
+    camera.updateProjectionMatrix();
+    controls.update();
   }
 
   function _renderLoop(now) {
@@ -149,6 +168,7 @@ const Anatomy3D = (() => {
     if (!model || !['x', 'y', 'z'].includes(String(axis).toLowerCase())) return;
     _show();
     controls.reset();
+    _fitCamera();
     const from = model.rotation.clone();
     model.rotation.set(0, 0, 0);
     model.rotation[String(axis).toLowerCase()] = THREE.MathUtils.degToRad(Number(degrees));
@@ -173,6 +193,7 @@ const Anatomy3D = (() => {
     if (!model) return;
     _show();
     controls.reset();
+    _fitCamera();
     animation = null;
     Object.values(structures).forEach((mesh) => { mesh.visible = true; });
     _applyDefaultRotation();
@@ -203,19 +224,15 @@ const Anatomy3D = (() => {
     legend.replaceChildren();
     legendOrder.forEach((name) => {
       const item = document.createElement('span');
-      item.className = `legend-item${structures[name]?.visible === false ? ' hidden' : ''}`;
-      const swatch = document.createElement('span');
-      swatch.className = 'legend-swatch';
-      swatch.style.background = colors[name];
-      const label = document.createElement('span');
-      label.textContent = displayNames[name] || name.replace(/_/g, ' ');
-      item.append(swatch, label);
+      item.className = structures[name]?.visible === false ? 'off' : '';
+      item.style.setProperty('--c', colors[name]);
+      item.textContent = displayNames[name] || name.replace(/_/g, ' ');
       legend.appendChild(item);
     });
   }
 
   function _setViewName(name) {
-    document.getElementById('ar-view-name').textContent = name;
+    document.getElementById('ar-view-name').textContent = name === 'Default' ? 'Default view' : name;
   }
 
   function viewNameFor(axis, degrees) {

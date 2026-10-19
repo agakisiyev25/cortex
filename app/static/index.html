@@ -27,28 +27,26 @@
 
     <main id="viewers">
       <section id="mri-panel" class="well viewer-panel" aria-label="MRI viewer">
-        <header class="panel-header">
-          <div id="mri-title" class="panel-title">MRI · T1c · Axial</div>
-          <div class="panel-meta-group">
-            <span id="mri-landmark" class="landmark-chip" hidden></span>
-            <span id="mri-slice-meta" class="panel-meta">Slice — / —</span>
+        <canvas id="ct-canvas" class="fill"></canvas>
+        <div class="well-head">
+          <div class="well-title">Axial MRI<span id="mri-modality">T1 with contrast</span></div>
+          <div class="well-meta">
+            <span id="mri-slice-meta" class="slice">— <small>/ —</small></span>
+            <span id="mri-landmark" class="chip chip-voice" hidden></span>
           </div>
-        </header>
-        <div id="mri-body" class="viewer-body mri-body">
-          <canvas id="ct-canvas"></canvas>
-          <div class="slice-track" aria-hidden="true"><div id="slice-marker"></div></div>
         </div>
-        <footer id="mri-legend" class="viewer-footer"></footer>
+        <div class="slice-track" aria-hidden="true"><i id="slice-marker"></i></div>
+        <div id="mri-legend" class="well-foot legend"></div>
         <div class="viewer-placeholder">MRI hidden</div>
       </section>
 
       <section id="ar-panel" class="well well-3d viewer-panel" aria-label="3D patient model">
-        <header class="panel-header">
-          <div class="panel-title">3D · Patient-specific model</div>
-          <span id="ar-view-name" class="panel-meta">Default</span>
-        </header>
-        <div id="ar-body" class="viewer-body ar-body"><canvas id="ar-canvas"></canvas></div>
-        <footer id="ar-legend" class="viewer-footer"></footer>
+        <canvas id="ar-canvas" class="fill"></canvas>
+        <div class="well-head">
+          <div class="well-title">Patient model<span>3D</span></div>
+          <div class="well-meta"><span id="ar-view-name" class="view">Default view</span></div>
+        </div>
+        <div id="ar-legend" class="well-foot legend"></div>
         <div class="viewer-placeholder">3D model hidden</div>
       </section>
 

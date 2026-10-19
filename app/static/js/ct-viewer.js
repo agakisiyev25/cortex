@@ -19,7 +19,7 @@ const CTViewer = (() => {
   function init(config) {
     canvas = document.getElementById(config.canvasId);
     context = canvas.getContext('2d');
-    body = document.getElementById('mri-body');
+    body = document.getElementById('mri-panel');
     viewers = document.getElementById('viewers');
     slicesBase = config.slicesBase;
     totalSlices = config.totalSlices;
@@ -27,7 +27,13 @@ const CTViewer = (() => {
     landmarks = config.landmarks;
     currentSlice = config.startSlice;
 
-    document.getElementById('mri-title').textContent = `MRI · ${config.modality} · Axial`;
+    const modalityNames = {
+      T1c: 'T1 with contrast',
+      T1: 'T1',
+      T2: 'T2',
+      FLAIR: 'FLAIR',
+    };
+    document.getElementById('mri-modality').textContent = modalityNames[config.modality] || config.modality;
     _buildLegend(config.structures, config.displayNames, config.colors);
     body.addEventListener('wheel', _onWheel, { passive: false });
     window.addEventListener('resize', _resizeAndDraw);
@@ -41,13 +47,8 @@ const CTViewer = (() => {
     legend.replaceChildren();
     structures.filter((name) => name !== 'brain').forEach((name) => {
       const item = document.createElement('span');
-      item.className = 'legend-item';
-      const swatch = document.createElement('span');
-      swatch.className = 'legend-swatch';
-      swatch.style.background = colors[name];
-      const label = document.createElement('span');
-      label.textContent = displayNames[name];
-      item.append(swatch, label);
+      item.style.setProperty('--c', colors[name]);
+      item.textContent = displayNames[name];
       legend.appendChild(item);
     });
   }
@@ -113,15 +114,25 @@ const CTViewer = (() => {
       canvas.height = pixelHeight;
     }
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    context.clearRect(0, 0, width, height);
+    context.fillStyle = '#000';
+    context.fillRect(0, 0, width, height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = 'high';
     if (currentImage) {
-      const scale = Math.min(width / currentImage.naturalWidth, height / currentImage.naturalHeight);
+      const left = 16;
+      const top = 48;
+      const availableWidth = Math.max(1, width - left - 24);
+      const availableHeight = Math.max(1, height - top - 40);
+      const scale = Math.min(
+        availableWidth / currentImage.naturalWidth,
+        availableHeight / currentImage.naturalHeight,
+      );
       const drawWidth = currentImage.naturalWidth * scale;
       const drawHeight = currentImage.naturalHeight * scale;
       context.drawImage(
         currentImage,
-        (width - drawWidth) / 2,
-        (height - drawHeight) / 2,
+        left + (availableWidth - drawWidth) / 2,
+        top + (availableHeight - drawHeight) / 2,
         drawWidth,
         drawHeight,
       );
@@ -130,10 +141,11 @@ const CTViewer = (() => {
   }
 
   function _updateMeta() {
-    document.getElementById('mri-slice-meta').textContent = `Slice ${currentSlice} / ${totalSlices}`;
+    document.getElementById('mri-slice-meta').innerHTML = `${currentSlice} <small>/ ${totalSlices}</small>`;
     const landmark = document.getElementById('mri-landmark');
     if (currentLandmark) {
-      landmark.textContent = currentLandmark.replace(/_/g, ' ');
+      const words = currentLandmark.replace(/_/g, ' ');
+      landmark.textContent = words.charAt(0).toUpperCase() + words.slice(1);
       landmark.hidden = false;
     } else {
       landmark.hidden = true;
@@ -143,12 +155,10 @@ const CTViewer = (() => {
   }
 
   function _updateTrack() {
-    const track = document.querySelector('.slice-track');
     const marker = document.getElementById('slice-marker');
-    if (!track || !marker) return;
-    const usable = Math.max(0, track.clientHeight - marker.offsetHeight);
+    if (!marker) return;
     const fraction = totalSlices > 1 ? (currentSlice - 1) / (totalSlices - 1) : 0;
-    marker.style.top = `${usable * fraction}px`;
+    marker.style.top = `${fraction * 100}%`;
   }
 
   return { init, navigate, jumpToLandmark, hide };
