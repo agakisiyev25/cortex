@@ -9,7 +9,9 @@ const Anatomy3D = (() => {
   let controls;
   let model;
   let canvas;
+  let container;
   let viewers;
+  let resizeObserver;
   let defaultView = { x: 15, y: 35 };
   let animation = null;
   let legendOrder = [];
@@ -19,6 +21,7 @@ const Anatomy3D = (() => {
 
   function init(config) {
     canvas = document.getElementById(config.canvasId);
+    container = canvas.parentElement;
     viewers = document.getElementById('viewers');
     defaultView = config.defaultView || defaultView;
     legendOrder = config.structures || [];
@@ -48,6 +51,8 @@ const Anatomy3D = (() => {
 
     _resize();
     window.addEventListener('resize', _resize);
+    resizeObserver = new ResizeObserver(_resize);
+    resizeObserver.observe(container);
     _loadModel(config.modelUrl);
     _renderLoop();
   }
@@ -89,7 +94,13 @@ const Anatomy3D = (() => {
           child.material.transparent = false;
           child.material.opacity = 1;
           child.material.depthWrite = true;
-          child.renderOrder = 1;
+          child.renderOrder = 0;
+          if (child.name.toLowerCase() === 'edema') {
+            child.material.transparent = true;
+            child.material.opacity = 0.35;
+            child.material.depthWrite = false;
+            child.renderOrder = 1;
+          }
           if (child.name.toLowerCase() === 'brain') {
             child.material.transparent = true;
             child.material.opacity = 0.14;
@@ -112,9 +123,9 @@ const Anatomy3D = (() => {
   }
 
   function _resize() {
-    if (!renderer || !canvas) return;
-    const width = Math.max(1, canvas.clientWidth);
-    const height = Math.max(1, canvas.clientHeight);
+    if (!renderer || !container) return;
+    const width = Math.max(1, container.clientWidth);
+    const height = Math.max(1, container.clientHeight);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();

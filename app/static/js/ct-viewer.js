@@ -14,6 +14,7 @@ const CTViewer = (() => {
   let currentSlice = 1;
   let currentImage = null;
   let currentLandmark = '';
+  let resizeObserver;
 
   function init(config) {
     canvas = document.getElementById(config.canvasId);
@@ -30,6 +31,8 @@ const CTViewer = (() => {
     _buildLegend(config.structures, config.displayNames, config.colors);
     body.addEventListener('wheel', _onWheel, { passive: false });
     window.addEventListener('resize', _resizeAndDraw);
+    resizeObserver = new ResizeObserver(_resizeAndDraw);
+    resizeObserver.observe(body);
     jumpToLandmark('tumor');
   }
 
