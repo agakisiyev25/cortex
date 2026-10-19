@@ -129,6 +129,9 @@ def test_dev_tool_route_is_environment_gated(
     production_main = importlib.import_module("main")
     production_paths = {route.path for route in production_main.app.routes}
     assert "/dev/tool/{name}" not in production_paths
+    case_response = TestClient(production_main.app).get("/api/case")
+    assert case_response.status_code == 200
+    assert set(case_response.json()) == {"case", "patient"}
 
     monkeypatch.setenv("CORTEX_DEV", "1")
     sys.modules.pop("main", None)

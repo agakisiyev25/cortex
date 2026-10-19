@@ -1,161 +1,114 @@
-/**
- * app.js — ORION WebSocket client and event router
- * =================================================
- * ES module — loaded with <script type="module"> in index.html.
- *
- * Responsibilities:
- *   1. Manages WebSocket connection lifecycle
- *   2. Starts audio I/O via bidi-demo AudioWorklet functions
- *   3. Receives ADK event JSON from server, dispatches to display modules
- */
+/** CorteX WebSocket, audio, tool routing, and console interaction. */
 
 import { startAudioPlayerWorklet } from './audio-player.js';
 import { startAudioRecorderWorklet, stopMicrophone } from './audio-recorder.js';
 
-// ── Configuration ──────────────────────────────────────────────────────────
 const CONFIG = Object.assign({ caseUrl: '/static/case/case.json' }, window.ORION_CONFIG || {});
+const isDemo = new URLSearchParams(window.location.search).get('demo') === '1';
 
-// ── DOM references ─────────────────────────────────────────────────────────
-const orionOrb         = document.getElementById('orion-orb');
+const orionOrb = document.getElementById('orion-orb');
 const orionStatusLabel = document.getElementById('orion-status-label');
-const routingLog       = document.getElementById('routing-log');
-const transcriptLog    = document.getElementById('transcript-log');
-
-// ── Audio state ────────────────────────────────────────────────────────────
-let audioPlayerNode  = null;
-let audioRecorderCtx = null;   // recorder AudioContext — must be closed on disconnect
-let micStream        = null;
-let audioSuppressed  = false;  // true after barge-in — suppresses stale audio chunks
-let _lastSuppressTime = 0;     // timestamp of last barge-in (debounce unsuppress)
-
-// ── WebSocket state ────────────────────────────────────────────────────────
-let ws                = null;
-let _autoReconnect    = false;  // set when server sends error — triggers reconnect on close
-
-// ── Transcript state ───────────────────────────────────────────────────────
-// Live API streams transcription word-by-word. Track the current in-progress
-// bubble for each speaker and update it in place rather than adding new entries.
-let currentOrionEntry   = null;
-let currentSurgeonEntry = null;
-
-// ── Tool-call deduplication ────────────────────────────────────────────────
-// Prevents duplicate execution when the user repeats a command while waiting
-// for a response. Key = "toolName:argsJSON", value = timestamp of last dispatch.
-const _dispatchedTools = new Map();
-const TOOL_DEDUP_MS    = 4000;  // ignore identical call within 4 s
-
-// ── Agent & tool metrics ───────────────────────────────────────────────────
-let   _activeAgent  = null;                // current event.author
-let   _activeTool   = null;               // tool name being called right now
-const _toolMetrics  = new Map();           // toolName → { count, lastCalled }
-
-function updateAgentCard() {
-  // Highlight the currently active agent chip
-  document.querySelectorAll('.agent-chip').forEach((chip) => {
-    chip.classList.toggle('active', chip.dataset.agent === _activeAgent);
-  });
-}
-
-function updateToolChip(toolName) {
-  const metric = _toolMetrics.get(toolName);
-  const chip = document.querySelector(`.tool-chip[data-tool="${toolName}"]`);
-  if (!chip) return;
-  chip.classList.add('called');
-  const countEl = chip.querySelector('.tool-chip-count');
-  if (countEl && metric) countEl.textContent = `×${metric.count}`;
-}
-
-function setActiveToolChip(toolName) {
-  // Clear previous active
-  if (_activeTool) {
-    const prev = document.querySelector(`.tool-chip[data-tool="${_activeTool}"]`);
-    if (prev) prev.classList.remove('active');
-  }
-  _activeTool = toolName;
-  if (toolName) {
-    const chip = document.querySelector(`.tool-chip[data-tool="${toolName}"]`);
-    if (chip) chip.classList.add('active');
-  }
-}
-
-// ── Entry point ────────────────────────────────────────────────────────────
-orionOrb.addEventListener('click', () => {
-  if (ws && ws.readyState === WebSocket.OPEN) disconnect();
-  else connect();
-});
-
+const liveStatus = document.getElementById('live-status');
+const liveStatusText = document.getElementById('live-status-text');
+const sessionTimer = document.getElementById('session-timer');
+const disconnectButton = document.getElementById('disconnect-button');
+const voiceModeToggle = document.getElementById('voice-mode-toggle');
+const transcriptLog = document.getElementById('transcript-log');
+const actionsFeed = document.getElementById('actions-feed');
 const typedCommand = document.getElementById('typed-command');
 const typedInput = document.getElementById('typed-input');
-typedCommand.addEventListener('submit', (event) => {
-  event.preventDefault();
-  const value = typedInput.value.trim();
-  if (!value) return;
 
-  const send = () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'text', content: value }));
-    }
-  };
+let caseData = null;
+let patientData = null;
+let audioPlayerNode = null;
+let audioRecorderCtx = null;
+let micStream = null;
+let audioSuppressed = false;
+let _lastSuppressTime = 0;
+let ws = null;
+let _autoReconnect = false;
+let currentOrionEntry = null;
+let currentSurgeonEntry = null;
+let handsFree = false;
+let talking = false;
+let orbState = 'offline';
+let thinkingTimer = null;
+let speakingTimer = null;
+let timerInterval = null;
+let sessionStarted = 0;
+let spaceHeld = false;
 
-  if (!ws || ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
-    connect();
+const _dispatchedTools = new Map();
+const TOOL_DEDUP_MS = 4000;
+const pendingActions = new Map();
+
+const pageReady = initialisePage();
+
+async function initialisePage() {
+  const response = await fetch('/api/case');
+  if (!response.ok) throw new Error(`Case API failed: ${response.status}`);
+  const payload = await response.json();
+  caseData = payload.case;
+  patientData = payload.patient;
+
+  document.getElementById('case-id').textContent = `Case ${caseData.case_id}`;
+  document.getElementById('case-procedure').textContent = patientData.procedure.value;
+  const allergies = patientData.allergies.value.replace(/\s*\([^)]*\)/g, '');
+  document.getElementById('allergy-chip').textContent = `Allergies: ${allergies}`;
+
+  Drawer.init(caseData);
+  Banner.init();
+  Modal.init();
+  CTViewer.init({
+    canvasId: 'ct-canvas',
+    slicesBase: caseData.slices.base_url,
+    totalSlices: caseData.slices.count,
+    pad: caseData.slices.pad,
+    landmarks: caseData.landmarks,
+    startSlice: caseData.landmarks.tumor,
+    modality: caseData.modality,
+    structures: caseData.structures,
+    displayNames: caseData.display_names,
+    colors: caseData.colors,
+  });
+  Anatomy3D.init({
+    canvasId: 'ar-canvas',
+    modelUrl: caseData.model_url,
+    defaultView: caseData.default_view,
+    structures: caseData.structures,
+    displayNames: caseData.display_names,
+    colors: caseData.colors,
+  });
+
+  if (isDemo) {
+    setStatus('demo');
+    installDemoApi();
+  } else {
+    setStatus('offline');
   }
-  if (ws && ws.readyState === WebSocket.OPEN) send();
-  else if (ws) ws.addEventListener('open', send, { once: true });
-
-  _upsertTranscript('surgeon', value);
-  currentSurgeonEntry = null;
-  typedInput.value = '';
-});
+}
 
 async function connect() {
-  if (ws && ws.readyState === WebSocket.OPEN) return;
+  if (isDemo) return;
+  await pageReady;
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
-  const userId    = `surgeon_${Date.now()}`;
-  const sessionId = `session_${Date.now()}`;
-  const protocol  = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl     = `${protocol}://${window.location.host}/ws/${userId}/${sessionId}`;
-
+  const timestamp = Date.now();
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
   setStatus('connecting');
-  logRouting('Connecting to CorteX server…', 'turn');
-
-  ws = new WebSocket(wsUrl);
+  ws = new WebSocket(`${protocol}://${window.location.host}/ws/surgeon_${timestamp}/session_${timestamp}`);
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = async () => {
     setStatus('active');
-    logRouting('Session established.', 'turn');
-
+    _startSessionTimer();
     try {
-      // Start audio output (24kHz playback)
       [audioPlayerNode] = await startAudioPlayerWorklet();
-
-      // Start audio input (16kHz capture) — capture context so we can close it on disconnect
       [, audioRecorderCtx, micStream] = await startAudioRecorderWorklet(audioRecorderHandler);
-    } catch (err) {
-      logRouting(`Audio init failed: ${err.message || err} — refresh if issue persists`, 'error');
-      setStatus('offline');
-      return;
+    } catch (error) {
+      console.error('Audio init failed:', error);
+      disconnect();
     }
-
-    // Initialise display modules
-    const kase = await (await fetch(CONFIG.caseUrl)).json();
-    CTViewer.init({
-      canvasId: 'ct-canvas',
-      slicesBase: kase.slices.base_url,
-      totalSlices: kase.slices.count,
-      pad: kase.slices.pad,
-      landmarks: kase.landmarks,
-      startSlice: kase.landmarks.tumor,
-    });
-    Anatomy3D.init({
-      canvasId: 'ar-canvas',
-      modelUrl: kase.model_url,
-    });
-    ClinicalPanel.init({ modalId: 'clinical-modal', bodyId: 'vitals-body' });
-    ChecklistPanel.init({ modalId: 'checklist-modal', bodyId: 'checklist-body' });
-    LogPanel.init({ modalId: 'log-modal', bodyId: 'log-body' });
-    SummaryPanel.init({ modalId: 'summary-modal', bodyId: 'summary-body' });
   };
 
   ws.onmessage = (event) => {
@@ -163,26 +116,18 @@ async function connect() {
   };
 
   ws.onclose = () => {
-    setStatus('offline');
-    _activeAgent = null;
-    _toolMetrics.clear();
-    _dispatchedTools.clear();       // reset dedup cache so reconnect isn't silenced
-    currentOrionEntry   = null;     // drop stale DOM refs from previous session
+    talking = false;
+    _dispatchedTools.clear();
+    pendingActions.forEach((items) => items.forEach((item) => clearTimeout(item.timer)));
+    pendingActions.clear();
+    currentOrionEntry = null;
     currentSurgeonEntry = null;
-    updateAgentCard();
-    setActiveToolChip(null);
-    SummaryPanel.hide();
-    document.querySelectorAll('.tool-chip').forEach((chip) => {
-      chip.classList.remove('called', 'active');
-      const countEl = chip.querySelector('.tool-chip-count');
-      if (countEl) countEl.textContent = '';
-    });
     if (micStream) { stopMicrophone(micStream); micStream = null; }
-    if (audioRecorderCtx) {         // close recorder AudioContext — prevents browser limit (~6) being hit on repeated reconnects
+    if (audioRecorderCtx) {
       try { audioRecorderCtx.close(); } catch (_) {}
       audioRecorderCtx = null;
     }
-    if (audioPlayerNode) {          // tear down audio player so reconnect gets a clean context
+    if (audioPlayerNode) {
       try {
         audioPlayerNode.port.postMessage({ command: 'endOfAudio' });
         audioPlayerNode.disconnect();
@@ -190,392 +135,420 @@ async function connect() {
       } catch (_) {}
       audioPlayerNode = null;
     }
+    _stopSessionTimer();
+    setStatus('offline');
     if (_autoReconnect) {
       _autoReconnect = false;
-      logRouting('Reconnecting…', 'turn');
       setTimeout(connect, 1500);
-    } else {
-      logRouting('Connection closed.', 'turn');
     }
   };
 
-  ws.onerror = () => {
-    setStatus('offline');
-    logRouting('WebSocket error — check server logs.', 'error');
-  };
+  ws.onerror = () => console.error('CorteX WebSocket error');
 }
 
 function disconnect() {
-  if (ws) { ws.close(); ws = null; }
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
 }
 
-
-// ── Audio I/O ──────────────────────────────────────────────────────────────
-
-/**
- * Barge-in handler — flush audio player + suppress stale chunks + update UI.
- * Idempotent: safe to call from multiple triggers (interrupted, inputTranscription).
- * This is the ADK-standard pattern: react to server events, don't predict locally.
- */
 function _bargeIn() {
   if (audioSuppressed) return;
   audioSuppressed = true;
   _lastSuppressTime = Date.now();
   if (audioPlayerNode) audioPlayerNode.port.postMessage({ command: 'endOfAudio' });
   currentOrionEntry = null;
-  setStatus('interrupted');
 }
 
-/** Called by startAudioRecorderWorklet — receives raw PCM ArrayBuffer. */
 function audioRecorderHandler(pcmData) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(pcmData);  // binary frame — server handles VAD via Live API
+  if (talking) {
+    const samples = new Int16Array(pcmData);
+    let energy = 0;
+    for (let index = 0; index < samples.length; index += 1) {
+      const sample = samples[index] / 32768;
+      energy += sample * sample;
+    }
+    const rms = Math.sqrt(energy / Math.max(1, samples.length));
+    orionOrb.style.setProperty('--orb-scale', String(1 + Math.min(rms * 4, 0.25)));
+  }
+  if (ws?.readyState === WebSocket.OPEN && (handsFree || talking)) {
+    ws.send(pcmData);
   }
 }
 
-/** Decode base64 PCM audio and send to AudioWorklet player. */
+function startTalking() {
+  if (handsFree || talking || ws?.readyState !== WebSocket.OPEN) return;
+  _bargeIn();
+  talking = true;
+  clearTimeout(thinkingTimer);
+  setStatus('talking');
+}
+
+function stopTalking() {
+  if (!talking) return;
+  talking = false;
+  orionOrb.style.setProperty('--orb-scale', '1');
+  if (ws?.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'audio_stream_end' }));
+  }
+  setStatus('thinking');
+  clearTimeout(thinkingTimer);
+  thinkingTimer = setTimeout(() => {
+    if (orbState === 'thinking') setStatus('active');
+  }, 8000);
+}
+
+function _markSpeaking() {
+  clearTimeout(thinkingTimer);
+  setStatus('speaking');
+  clearTimeout(speakingTimer);
+  speakingTimer = setTimeout(() => {
+    if (ws?.readyState === WebSocket.OPEN && orbState === 'speaking') setStatus('active');
+  }, 600);
+}
+
 function base64ToArray(base64) {
-  // Handle base64url encoding (replace - and _ with + and /)
-  const std = base64.replace(/-/g, '+').replace(/_/g, '/');
-  const binary = atob(std);
+  const standard = base64.replace(/-/g, '+').replace(/_/g, '/');
+  const binary = atob(standard);
   const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes.buffer;
 }
 
-
-// ── Server event handling ──────────────────────────────────────────────────
-
-/**
- * ADK serialises events as snake_case via model_dump_json().
- * Some fields may also arrive camelCase — we check both to be safe.
- */
 function handleServerEvent(jsonString) {
   let event;
-  try { event = JSON.parse(jsonString); }
-  catch { return; }
+  try { event = JSON.parse(jsonString); } catch (_) { return; }
 
-  // AI interaction transparency log — sent by main.py on turnComplete
-  if (event.type === 'ai_log' && event.entry) {
-    LogPanel.append(event.entry);
-    return;
-  }
-
-  // Recoverable server error — log it and flag for auto-reconnect on close
   if (event.type === 'error') {
-    logRouting(`⚠ ${event.message || 'Unknown error'} — reconnecting…`, 'error');
+    console.error(event.message || 'Unknown live-session error');
     _autoReconnect = true;
     return;
   }
 
-  // Input transcription (surgeon speech — what Gemini heard).
-  // Barge-in: surgeon is speaking → flush any playing audio and suppress
-  // stale chunks. The Live API's automatic VAD also sends `interrupted`
-  // (handled below), but inputTranscription often arrives first.
   const inputText = event.inputTranscription?.text ?? event.input_transcription?.text;
   if (inputText) {
     _bargeIn();
-    setStatus('listening');
     _upsertTranscript('surgeon', inputText);
   }
 
-  // Output transcription (ORION spoken response) — streams in chunks.
-  // Unsuppress audio: a new outputTranscription means the model is responding
-  // to the surgeon's latest input. Debounce to avoid unsuppressing from stale
-  // output that overlaps with a fresh barge-in.
   const outputText = event.outputTranscription?.text ?? event.output_transcription?.text;
   if (outputText) {
     if (Date.now() - _lastSuppressTime > 300) audioSuppressed = false;
+    _markSpeaking();
     _upsertTranscript('orion', outputText);
-  }
-
-  // Agent routing visibility + metrics card
-  if (event.author) {
-    if (event.author !== _activeAgent) {
-      _activeAgent = event.author;
-      updateAgentCard();
-    }
-    if (event.author !== 'CORTEX') {
-      logRouting(`→ ${event.author}`, 'transfer');
-    }
   }
 
   const parts = event.content?.parts ?? [];
   for (const part of parts) {
-
-    // Audio output — send PCM to AudioWorklet player.
-    // Forward audio from ANY agent (orchestrator or sub-agents). ADK's
-    // multi-agent live flow has sub-agents generate the audio response.
     const inlineData = part.inlineData ?? part.inline_data;
-    const mimeType   = inlineData?.mimeType ?? inlineData?.mime_type ?? '';
+    const mimeType = inlineData?.mimeType ?? inlineData?.mime_type ?? '';
     if (inlineData && mimeType.startsWith('audio/pcm') && audioPlayerNode && !audioSuppressed) {
-      setStatus('speaking');
+      _markSpeaking();
       audioPlayerNode.port.postMessage(base64ToArray(inlineData.data));
     }
 
-    // Text from model (non-audio fallback)
     if (part.text && event.content?.role === 'model' && !outputText) {
+      _markSpeaking();
       _upsertTranscript('orion', part.text);
     }
 
-    // Function call → dispatch to display layer (deduplicated)
-    const fc = part.functionCall ?? part.function_call;
-    if (fc) {
-      const key  = `${fc.name}:${JSON.stringify(fc.args ?? fc.arguments ?? {})}`;
-      const now  = Date.now();
-      const last = _dispatchedTools.get(key) ?? 0;
-      if (now - last > TOOL_DEDUP_MS) {
+    const functionCall = part.functionCall ?? part.function_call;
+    if (functionCall) {
+      const args = functionCall.args ?? functionCall.arguments ?? {};
+      const key = `${functionCall.name}:${JSON.stringify(args)}`;
+      const now = Date.now();
+      if (now - (_dispatchedTools.get(key) ?? 0) > TOOL_DEDUP_MS) {
         _dispatchedTools.set(key, now);
-        // Track tool call count and highlight chip
-        const prev = _toolMetrics.get(fc.name) ?? { count: 0, lastCalled: 0 };
-        _toolMetrics.set(fc.name, { count: prev.count + 1, lastCalled: Date.now() });
-        setActiveToolChip(fc.name);
-        updateToolChip(fc.name);
-        logRouting(`▶ ${fc.name}(${JSON.stringify(fc.args)})`, 'tool-call');
-        dispatchRenderCommand(fc.name, fc.args ?? fc.arguments ?? {});
-      } else {
-        logRouting(`⚠ deduplicated ${fc.name}`, 'turn');
+        queueAction(functionCall.name, args);
+        dispatchRenderCommand(functionCall.name, args);
       }
     }
 
-    // Function response → update display with actual clinical values
-    const fr = part.functionResponse ?? part.function_response;
-    if (fr) handleFunctionResponse(fr);
+    const functionResponse = part.functionResponse ?? part.function_response;
+    if (functionResponse) {
+      handleFunctionResponse(functionResponse);
+      resolveAction(functionResponse);
+    }
   }
 
-  // Interrupt — server-side VAD detected barge-in (root agent audio).
-  // _bargeIn() is idempotent — safe to call even if already suppressed.
   if (event.interrupted) _bargeIn();
-
-  // Turn complete — multi-agent flow fires turnComplete after each sub-agent.
-  // Only seal the surgeon bubble (their utterance is fully received).
-  // Keep currentOrionEntry open so all agent responses within one user
-  // request accumulate into a single ORION bubble.
   if (event.turnComplete ?? event.turn_complete) {
     currentSurgeonEntry = null;
-    setActiveToolChip(null);
-    if (ws && ws.readyState === WebSocket.OPEN) setStatus('active');
   }
 }
 
-
-// ── Render command dispatch ────────────────────────────────────────────────
-
-function dispatchRenderCommand(toolName, args) {
+function dispatchRenderCommand(toolName, args = {}) {
   switch (toolName) {
-    case 'display_patient_data':
-      ClinicalPanel.showLoading(args.field);
-      break;
-    case 'display_all_patient_data':
-      // No loading state needed — show_all arrives in handleFunctionResponse
-      break;
-    case 'hide_patient_data':
-      ClinicalPanel.hide();
-      break;
-    case 'navigate_scan':
-      CTViewer.navigate(args.direction, args.count || 1);
-      break;
-    case 'jump_to_landmark':
-      CTViewer.jumpToLandmark(args.landmark);
-      break;
-    case 'hide_scan':
-      CTViewer.hide();
-      break;
-    case 'rotate_model':
-      Anatomy3D.rotate(args.axis, args.degrees);
-      break;
-    case 'toggle_structure':
-      Anatomy3D.toggleStructure(args.structure, args.visible);
-      break;
-    case 'reset_3d_view':
-      Anatomy3D.reset();
-      break;
-    case 'hide_3d':
-      Anatomy3D.hide();
-      relayoutTiles();
-      break;
-    case 'log_event':
-      // no loading state — result arrives immediately in handleFunctionResponse
-      break;
-    case 'show_event_log':
-      break;
-    case 'hide_surgical_checklist':
-      ChecklistPanel.hide();
-      relayoutTiles();
-      break;
-    case 'hide_event_log':
-      LogPanel.hide();
-      relayoutTiles();
-      break;
+    case 'hide_patient_data': Drawer.remove('patient'); break;
+    case 'navigate_scan': CTViewer.navigate(args.direction, args.count || 1); break;
+    case 'jump_to_landmark': CTViewer.jumpToLandmark(args.landmark); break;
+    case 'hide_scan': CTViewer.hide(); break;
+    case 'rotate_model': Anatomy3D.rotate(args.axis, args.degrees); break;
+    case 'toggle_structure': Anatomy3D.toggleStructure(args.structure, args.visible); break;
+    case 'reset_3d_view': Anatomy3D.reset(); break;
+    case 'hide_3d': Anatomy3D.hide(); break;
+    case 'hide_surgical_checklist': Drawer.remove('checklist'); break;
+    case 'hide_event_log': Drawer.remove('log'); break;
     case 'hide_all_overlays':
-      CTViewer.hide(); ClinicalPanel.hide(); Anatomy3D.hide(); ChecklistPanel.hide(); LogPanel.hide(); SummaryPanel.hide();
-      relayoutTiles();
+      Drawer.clear(); Banner.hide(); Modal.hide();
       break;
     case 'show_only_ar':
-      CTViewer.hide(); ClinicalPanel.hide(); ChecklistPanel.hide(); LogPanel.hide();
-      relayoutTiles();
+      Drawer.clear(); Banner.hide(); Modal.hide(); CTViewer.hide();
+      document.getElementById('viewers').classList.remove('ar-hidden');
+      window.dispatchEvent(new Event('resize'));
       break;
     default:
-      console.warn('[app.js] Unknown tool:', toolName);
+      break;
   }
 }
 
-function handleFunctionResponse(fr) {
-  const cmd = fr.response?.render_command;
-  if (!cmd) return;
-  if (cmd.layer === 'clinical' && cmd.action === 'show') {
-    const d = cmd.data;
-    if (cmd.field === 'drug_check' && d) {
-      const label = d.status === 'safe' ? 'DRUG: SAFE' : 'DRUG: CAUTION';
-      ClinicalPanel.show('drug_check', label, d.drug, d.summary);
+function handleFunctionResponse(functionResponse) {
+  const response = functionResponse.response || {};
+  const command = response.render_command;
+  if (!command) return;
+
+  if (command.layer === 'clinical' && command.action === 'show') {
+    if (command.field === 'drug_check') {
+      Banner.show(response);
+    } else if (command.field === 'tumor_volumes') {
+      Drawer.showVolumes(response.volumes_cm3, command.note);
     } else {
-      ClinicalPanel.show(cmd.field, cmd.label, cmd.value, cmd.note);
+      Drawer.showPatient([{
+        field: command.field,
+        label: command.label,
+        value: command.value,
+        note: command.note,
+      }], true);
     }
-  }
-  if (cmd.layer === 'clinical' && cmd.action === 'show_all') {
-    (cmd.fields || []).forEach(f => ClinicalPanel.show(f.field, f.label, f.value, f.note));
-  }
-  if (cmd.layer === 'checklist' && cmd.action === 'show') {
-    ChecklistPanel.show(cmd.phase, cmd.label, cmd.checklist, cmd.warning);
-  }
-  if (cmd.layer === 'checklist' && cmd.action === 'hide') {
-    ChecklistPanel.hide();
-    relayoutTiles();
-  }
-  if (cmd.layer === 'log') {
-    if (cmd.action === 'append') {
-      LogPanel.append(cmd.entry);
-      relayoutTiles();
-    } else if (cmd.action === 'capture_photo') {
-      LogPanel.capturePhoto(cmd.entry);
-      relayoutTiles();
-    } else if (cmd.action === 'show_all') {
-      LogPanel.showAll(cmd.entries);
-      relayoutTiles();
-    } else if (cmd.action === 'hide') {
-      LogPanel.hide();
-      relayoutTiles();
-    }
-  }
-  if (cmd.layer === 'summary' && cmd.action === 'show') {
-    SummaryPanel.show(cmd.title, cmd.content, cmd.bullets);
-  }
-  if (cmd.layer === 'summary' && cmd.action === 'hide') {
-    SummaryPanel.hide();
-    relayoutTiles();
-  }
-  if (cmd.layer === 'all' && cmd.action === 'hide') {
-    CTViewer.hide(); ClinicalPanel.hide(); Anatomy3D.hide();
-    ChecklistPanel.hide(); LogPanel.hide(); SummaryPanel.hide();
-    relayoutTiles();
+  } else if (command.layer === 'clinical' && command.action === 'show_all') {
+    Drawer.showPatient(command.fields, false);
+  } else if (command.layer === 'clinical' && command.action === 'hide') {
+    Drawer.remove('patient');
+  } else if (command.layer === 'checklist' && command.action === 'show') {
+    Drawer.showChecklist(command);
+  } else if (command.layer === 'checklist' && command.action === 'hide') {
+    Drawer.remove('checklist');
+  } else if (command.layer === 'log' && command.action === 'append') {
+    Drawer.appendLog(command.entry);
+  } else if (command.layer === 'log' && command.action === 'show_all') {
+    Drawer.showLog(command.entries);
+  } else if (command.layer === 'log' && command.action === 'hide') {
+    Drawer.remove('log');
+  } else if (command.layer === 'summary' && command.action === 'show') {
+    Modal.show(command.title, command.content, command.bullets);
+  } else if (command.layer === 'summary' && command.action === 'hide') {
+    Modal.hide();
+  } else if (command.layer === 'all' && command.action === 'hide') {
+    Drawer.clear(); Banner.hide(); Modal.hide();
   }
 }
 
-
-// ── Tile layout ────────────────────────────────────────────────────────────
-
-const MODAL_IDS = ['ct-modal', 'ar-modal', 'clinical-modal', 'checklist-modal', 'log-modal', 'summary-modal'];
-
-// When any tile panel becomes visible the tiles column expands to 40% width,
-// pushing the video into the remaining 60%. No position arithmetic needed —
-// each visible tile gets an equal share of the column height via flex: 1.
-function relayoutTiles() {
-  const col = document.getElementById('tiles-column');
-  if (!col) return;
-  const anyVisible = MODAL_IDS.some(
-    (id) => document.getElementById(id)?.classList.contains('visible')
-  );
-  col.classList.toggle('has-tiles', anyVisible);
+function queueAction(name, args) {
+  const item = { args, done: false, timer: null };
+  item.timer = setTimeout(() => {
+    if (!item.done) {
+      item.done = true;
+      addAction(name, args, null);
+    }
+  }, 1000);
+  const queue = pendingActions.get(name) || [];
+  queue.push(item);
+  pendingActions.set(name, queue);
 }
 
-// Expose globally so ct-viewer.js, anatomy-3d.js, clinical-panel.js can call it
-window.ORION_relayoutModals = relayoutTiles;
+function resolveAction(functionResponse) {
+  const name = functionResponse.name;
+  const queue = pendingActions.get(name) || [];
+  const item = queue.find((candidate) => !candidate.done);
+  if (!item) return;
+  item.done = true;
+  clearTimeout(item.timer);
+  addAction(name, item.args, functionResponse.response || null);
+  pendingActions.set(name, queue.filter((candidate) => candidate !== item));
+}
 
+function addAction(name, args, response) {
+  const command = response?.render_command;
+  const eventWords = {
+    timeout_complete: 'Time-out complete', incision: 'Incision', tumor_resected: 'Tumor resected',
+    specimen_sent: 'Specimen sent', complication: 'Complication', milestone: 'Milestone', note: 'Note',
+  };
+  const landmarkWords = String(args.landmark || '').replace(/_/g, ' ');
+  const structureName = caseData.display_names[args.structure] || String(args.structure || '').replace(/_/g, ' ');
+  const texts = {
+    display_patient_data: `Patient: ${patientData[args.field]?.label || args.field}`,
+    display_all_patient_data: 'Patient record opened',
+    hide_patient_data: 'Patient card closed',
+    navigate_scan: `MRI ${args.direction} ${args.count || 1} → slice ${response?.slice ?? command?.slice ?? '—'}`,
+    jump_to_landmark: `MRI → ${landmarkWords} (slice ${response?.slice ?? command?.slice ?? '—'})`,
+    hide_scan: 'MRI hidden',
+    rotate_model: `3D → ${Anatomy3D.viewNameFor(args.axis, args.degrees)}`,
+    toggle_structure: `3D: ${structureName} ${args.visible ? 'shown' : 'hidden'}`,
+    reset_3d_view: '3D reset',
+    hide_3d: '3D hidden',
+    get_tumor_measurements: 'Tumor volumes measured',
+    get_surgical_phase: `Checklist: ${command?.label || String(args.phase || '').replace(/_/g, ' ')}`,
+    hide_surgical_checklist: 'Checklist closed',
+    check_drug_safety: `Drug check: ${response?.drug || args.drug_name}`,
+    log_event: `Logged: ${eventWords[response?.render_command?.entry?.type || args.event_type] || args.event_type}`,
+    show_event_log: 'Operative log opened',
+    hide_event_log: 'Operative log closed',
+    show_agent_summary: response?.render_command?.title || args.title,
+    hide_all_overlays: 'Display cleared',
+    show_only_ar: '3D only',
+  };
+  const category = name.startsWith('display_') || name === 'hide_patient_data' ? 'patient'
+    : ['navigate_scan', 'jump_to_landmark', 'hide_scan'].includes(name) ? 'mri'
+      : ['rotate_model', 'toggle_structure', 'reset_3d_view', 'hide_3d', 'get_tumor_measurements'].includes(name) ? 'model'
+        : name === 'check_drug_safety' ? 'drug'
+          : ['get_surgical_phase', 'hide_surgical_checklist', 'log_event', 'show_event_log', 'hide_event_log'].includes(name) ? 'procedure'
+            : 'display';
 
-// ── UI helpers ─────────────────────────────────────────────────────────────
+  const row = document.createElement('div');
+  row.className = 'action-row';
+  row.innerHTML = `<time class="action-time">${new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}</time><span class="action-dot ${category}"></span><span>${escapeHtml(texts[name] || name)}</span>`;
+  actionsFeed.prepend(row);
+  while (actionsFeed.children.length > 50) actionsFeed.lastElementChild.remove();
+}
 
 function setStatus(state) {
-  orionOrb.className = '';
-  orionStatusLabel.className = '';
-  switch (state) {
-    case 'connecting':
-      orionOrb.classList.add('orb-connecting');
-      orionStatusLabel.textContent = 'Connecting…';
-      orionStatusLabel.classList.add('lbl-connecting');
-      break;
-    case 'active':
-      orionOrb.classList.add('orb-active');
-      orionStatusLabel.textContent = 'Active';
-      orionStatusLabel.classList.add('lbl-active');
-      break;
-    case 'listening':
-      orionOrb.classList.add('orb-listening');
-      orionStatusLabel.textContent = 'Listening…';
-      orionStatusLabel.classList.add('lbl-listening');
-      break;
-    case 'speaking':
-      orionOrb.classList.add('orb-speaking');
-      orionStatusLabel.textContent = 'Speaking';
-      orionStatusLabel.classList.add('lbl-speaking');
-      break;
-    case 'interrupted':
-      orionOrb.classList.add('orb-interrupted');
-      orionStatusLabel.textContent = 'Interrupted';
-      orionStatusLabel.classList.add('lbl-interrupted');
-      // Animation runs 3× (1.5s total) then auto-reverts to active
-      setTimeout(() => {
-        if (ws && ws.readyState === WebSocket.OPEN) setStatus('active');
-      }, 1600);
-      break;
-    default: // inactive / offline
-      orionStatusLabel.textContent = 'CorteX offline. Tap to wake.';
+  orbState = state;
+  orionOrb.className = `orb ${state === 'active' ? 'idle' : state}`;
+  const connected = ['active', 'talking', 'thinking', 'speaking'].includes(state);
+  disconnectButton.hidden = !connected;
+  const labels = {
+    offline: 'Tap to connect', connecting: 'Connecting…', active: 'Hold SPACE or the orb to talk',
+    talking: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…', demo: 'Demo mode',
+  };
+  orionStatusLabel.textContent = labels[state] || labels.offline;
+
+  liveStatus.className = 'status-pill';
+  if (state === 'demo') {
+    liveStatus.classList.add('demo'); liveStatusText.textContent = 'DEMO';
+  } else if (state === 'connecting') {
+    liveStatus.classList.add('connecting'); liveStatusText.textContent = 'CONNECTING';
+  } else if (connected) {
+    liveStatus.classList.add('live'); liveStatusText.textContent = 'LIVE';
+  } else {
+    liveStatus.classList.add('offline'); liveStatusText.textContent = 'OFFLINE';
   }
 }
 
-function logRouting(text, type = 'turn') {
-  const entry = document.createElement('div');
-  entry.className = `routing-event ${type}`;
-  entry.textContent = text;
-  routingLog.appendChild(entry);
-  routingLog.scrollTop = routingLog.scrollHeight;
-  while (routingLog.children.length > 50) routingLog.removeChild(routingLog.firstChild);
+function _startSessionTimer() {
+  sessionStarted = Date.now();
+  clearInterval(timerInterval);
+  const update = () => {
+    const seconds = Math.floor((Date.now() - sessionStarted) / 1000);
+    sessionTimer.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  };
+  update();
+  timerInterval = setInterval(update, 1000);
 }
 
-/**
- * Upserts a transcript bubble for the given speaker.
- * Live API streams text in chunks — this updates the current in-progress
- * bubble in place instead of adding a new card for every chunk.
- * A new bubble is created only when the previous turn has been sealed
- * (currentOrionEntry / currentSurgeonEntry set to null on turnComplete).
- */
+function _stopSessionTimer() {
+  clearInterval(timerInterval);
+  timerInterval = null;
+  sessionTimer.textContent = '00:00';
+}
+
 function _upsertTranscript(speaker, text) {
   if (!text?.trim()) return;
-
   const isSurgeon = speaker === 'surgeon';
-  const current   = isSurgeon ? currentSurgeonEntry : currentOrionEntry;
-
+  const current = isSurgeon ? currentSurgeonEntry : currentOrionEntry;
   if (current) {
-    // Update the existing in-progress bubble
-    const textEl = current.querySelector('.text');
-    if (textEl) textEl.innerHTML = escapeHtml(text);
+    current.querySelector('.text').textContent = text;
   } else {
-    // Start a new bubble for this turn
     const entry = document.createElement('div');
     entry.className = `transcript-entry ${speaker}`;
-    entry.innerHTML = `
-      <div class="speaker">${isSurgeon ? 'Surgeon' : 'CorteX'}</div>
-      <div class="text">${escapeHtml(text)}</div>`;
+    entry.innerHTML = `<div class="speaker">${isSurgeon ? 'Surgeon' : 'CorteX'}</div><div class="text">${escapeHtml(text)}</div>`;
     transcriptLog.appendChild(entry);
-    // Trim history
-    while (transcriptLog.children.length > 100) transcriptLog.removeChild(transcriptLog.firstChild);
-
+    while (transcriptLog.children.length > 30) transcriptLog.firstElementChild.remove();
     if (isSurgeon) currentSurgeonEntry = entry;
-    else           currentOrionEntry   = entry;
+    else currentOrionEntry = entry;
   }
-
   transcriptLog.scrollTop = transcriptLog.scrollHeight;
 }
 
-function escapeHtml(str) {
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function escapeHtml(value) {
+  return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
+
+function installDemoApi() {
+  window.cortexDemo = {
+    async call(name, args = {}) {
+      await pageReady;
+      queueAction(name, args);
+      dispatchRenderCommand(name, args);
+      const response = await fetch(`/dev/tool/${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(args),
+      });
+      if (!response.ok) throw new Error(`Demo tool ${name} failed: ${response.status}`);
+      const result = await response.json();
+      handleFunctionResponse(result);
+      resolveAction(result);
+      return result.response;
+    },
+    say(role, text) {
+      const speaker = String(role).toLowerCase() === 'surgeon' ? 'surgeon' : 'orion';
+      _upsertTranscript(speaker, text);
+      if (speaker === 'surgeon') currentSurgeonEntry = null;
+      else currentOrionEntry = null;
+    },
+  };
+}
+
+orionOrb.addEventListener('click', () => {
+  if (!isDemo && ws?.readyState !== WebSocket.OPEN) connect();
+});
+orionOrb.addEventListener('pointerdown', (event) => {
+  if (ws?.readyState === WebSocket.OPEN && !handsFree) {
+    event.preventDefault();
+    orionOrb.setPointerCapture?.(event.pointerId);
+    startTalking();
+  }
+});
+orionOrb.addEventListener('pointerup', stopTalking);
+orionOrb.addEventListener('pointercancel', stopTalking);
+
+document.addEventListener('keydown', (event) => {
+  if (event.code !== 'Space' || event.repeat || handsFree || document.activeElement === typedInput) return;
+  if (ws?.readyState !== WebSocket.OPEN) return;
+  event.preventDefault();
+  spaceHeld = true;
+  startTalking();
+});
+document.addEventListener('keyup', (event) => {
+  if (event.code !== 'Space' || !spaceHeld) return;
+  event.preventDefault();
+  spaceHeld = false;
+  stopTalking();
+});
+
+voiceModeToggle.addEventListener('click', () => {
+  handsFree = !handsFree;
+  if (talking) stopTalking();
+  voiceModeToggle.setAttribute('aria-pressed', String(handsFree));
+  voiceModeToggle.textContent = handsFree ? 'Hands-free' : 'Push-to-talk';
+  if (ws?.readyState === WebSocket.OPEN) setStatus('active');
+});
+disconnectButton.addEventListener('click', disconnect);
+
+typedCommand.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const value = typedInput.value.trim();
+  if (!value) return;
+  _upsertTranscript('surgeon', value);
+  currentSurgeonEntry = null;
+  currentOrionEntry = null;
+  typedInput.value = '';
+  if (isDemo) return;
+  await connect();
+  const send = () => ws?.send(JSON.stringify({ type: 'text', content: value }));
+  if (ws?.readyState === WebSocket.OPEN) send();
+  else ws?.addEventListener('open', send, { once: true });
+});
+
+window.ORION_relayoutModals = () => window.dispatchEvent(new Event('resize'));

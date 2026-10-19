@@ -1,241 +1,223 @@
-/**
- * anatomy-3d.js — Three.js 3D lung anatomy model renderer
- * =========================================================
- * Loads a GLB lung anatomy model from GCS and renders it on a
- * canvas layered over the surgical video. Transparent background
- * so the surgical view shows through.
- *
- * Public API (called by app.js dispatchRenderCommand):
- *   Anatomy3D.init(config)
- *   Anatomy3D.rotate(axis, degrees)
- *   Anatomy3D.toggleStructure(structureName, visible)
- *   Anatomy3D.reset()
- *   Anatomy3D.hide()
- *
- * IMPORTANT — mesh names:
- *   After loading the model, all mesh names are logged to the console.
- *   Update the toggle_structure docstring in tools.py to use the exact
- *   names that appear. The names listed here ('parenchyma', 'tumor', etc.)
- *   are defaults — they MUST match your specific GLB file.
- */
+/** Three.js patient-specific anatomy renderer for the CorteX console. */
 
 'use strict';
 
 const Anatomy3D = (() => {
-
-  // ── State ────────────────────────────────────────────────────────────────
-  let renderer  = null;
-  let scene     = null;
-  let camera    = null;
-  let model     = null;
-  let canvas    = null;
-  let modal     = null;   // parent .overlay-modal wrapper
-  let animFrame = null;
-
-  // Map of lowercased mesh name → Three.js Mesh object
-  // Populated after model loads via traverse()
+  let renderer;
+  let scene;
+  let camera;
+  let controls;
+  let model;
+  let canvas;
+  let viewers;
+  let defaultView = { x: 15, y: 35 };
+  let animation = null;
+  let legendOrder = [];
+  let displayNames = {};
+  let colors = {};
   const structures = {};
 
-
-  // ── Initialisation ───────────────────────────────────────────────────────
-
-  /**
-   * @param {Object} config
-   * @param {string} config.canvasId  - DOM id of the AR canvas element
-   * @param {string} config.modelUrl  - public GCS URL to lung_model.glb
-   */
   function init(config) {
     canvas = document.getElementById(config.canvasId);
-    modal  = canvas.closest('.tile-panel');
+    viewers = document.getElementById('viewers');
+    defaultView = config.defaultView || defaultView;
+    legendOrder = config.structures || [];
+    displayNames = config.displayNames || {};
+    colors = config.colors || {};
 
-    // Renderer with alpha so Three.js background is transparent
     renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setClearColor(0x000000, 0);  // fully transparent background
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setClearColor(0x000000, 0);
 
     scene = new THREE.Scene();
-
-    // Camera
-    const aspect = canvas.offsetWidth / (canvas.offsetHeight || 1);
-    camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 100);
+    camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
     camera.position.set(0, 0, 3);
 
-    // Lighting
-    const ambient = new THREE.AmbientLight(0xffffff, 0.8);
-    scene.add(ambient);
+    controls = new THREE.OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.enablePan = false;
+    controls.addEventListener('start', () => _setViewName('Custom'));
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    dirLight.position.set(5, 10, 7.5);
-    scene.add(dirLight);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x223040, 0.9));
+    const key = new THREE.DirectionalLight(0xffffff, 0.8);
+    key.position.set(3, 5, 4);
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0x88ccff, 0.35);
+    rim.position.set(-4, 2, -3);
+    scene.add(rim);
 
-    // Resize handler
-    _resizeRenderer();
-    window.addEventListener('resize', _resizeRenderer);
-
-    // Load the GLB model
+    _resize();
+    window.addEventListener('resize', _resize);
     _loadModel(config.modelUrl);
-
-    // Start render loop
     _renderLoop();
   }
 
-  function _resizeRenderer() {
-    if (!renderer || !canvas) return;
-    const w = canvas.offsetWidth  || canvas.parentElement.offsetWidth  || 400;
-    const h = canvas.offsetHeight || canvas.parentElement.offsetHeight || 300;
-    console.log('[Anatomy3D] resize → canvas', w, '×', h);
-    renderer.setSize(w, h, false);
-    if (camera) {
-      camera.aspect = w / (h || 1);
-      camera.updateProjectionMatrix();
-    }
-  }
-
   function _loadModel(url) {
-    console.log('[Anatomy3D] fetching:', url);
-    const loader = new THREE.GLTFLoader();
-    loader.load(
+    new THREE.GLTFLoader().load(
       url,
       (gltf) => {
-        console.log('[Anatomy3D] GLB loaded. Scene children:', gltf.scene.children.length);
-        model = gltf.scene;
+        const content = gltf.scene;
+        const rawBox = new THREE.Box3().setFromObject(content);
+        const rawSize = rawBox.getSize(new THREE.Vector3());
+        const maxDimension = Math.max(rawSize.x, rawSize.y, rawSize.z);
+        content.scale.setScalar(2 / maxDimension);
+
+        const scaledBox = new THREE.Box3().setFromObject(content);
+        const centre = scaledBox.getCenter(new THREE.Vector3());
+        content.position.sub(centre);
+
+        model = new THREE.Group();
+        model.add(content);
         scene.add(model);
 
-        // Step 1: measure raw bounding box (vertices in mm)
-        const rawBox  = new THREE.Box3().setFromObject(model);
-        const rawSize = rawBox.getSize(new THREE.Vector3());
-        const maxDim  = Math.max(rawSize.x, rawSize.y, rawSize.z);
-        console.log('[Anatomy3D] raw bbox size:', rawSize, 'maxDim:', maxDim.toFixed(1), 'mm');
-
-        // Step 2: scale to 2 Three.js units FIRST
-        model.scale.setScalar(2 / maxDim);
-
-        // Step 3: recompute bbox in scaled space, then centre
-        const scaledBox    = new THREE.Box3().setFromObject(model);
-        const scaledCentre = scaledBox.getCenter(new THREE.Vector3());
-        model.position.sub(scaledCentre);
-        console.log('[Anatomy3D] scaled centre (should be ~0):', scaledCentre);
-
-        // Step 4: auto-position camera so model fills ~60% of view
-        const scaledSize   = scaledBox.getSize(new THREE.Vector3());
-        const scaledMaxDim = Math.max(scaledSize.x, scaledSize.y, scaledSize.z);
-        const camDist = scaledMaxDim / (2 * Math.tan(THREE.MathUtils.degToRad(22.5)));
-        camera.position.set(0, 0, camDist * 1.4);
-        camera.near  = camDist * 0.01;
-        camera.far   = camDist * 10;
-        camera.lookAt(new THREE.Vector3(0, 0, 0));
+        const fittedBox = new THREE.Box3().setFromObject(content);
+        const fittedSize = fittedBox.getSize(new THREE.Vector3());
+        const fittedMax = Math.max(fittedSize.x, fittedSize.y, fittedSize.z);
+        const cameraDistance = fittedMax / (2 * Math.tan(THREE.MathUtils.degToRad(22.5)));
+        camera.position.set(0, 0, cameraDistance * 1.35);
+        camera.near = cameraDistance * 0.01;
+        camera.far = cameraDistance * 10;
+        camera.lookAt(0, 0, 0);
         camera.updateProjectionMatrix();
-        console.log('[Anatomy3D] camDist:', camDist.toFixed(2), ' near/far:', camera.near.toFixed(3), camera.far.toFixed(1));
+        controls.target.set(0, 0, 0);
+        controls.update();
+        controls.saveState();
 
-        // Step 5: fix materials — DoubleSide prevents back-face culling from
-        // axis remap; opaque avoids transparent-mesh depth-sort blanks.
-        let meshCount = 0;
-        model.traverse((child) => {
-          if (child.isMesh && child.material) {
-            child.material.side        = THREE.DoubleSide;
-            child.material.transparent = false;
-            child.material.depthWrite  = true;
-            child.material.needsUpdate = true;
-            if (child.name.toLowerCase() === 'brain') {
-              child.material.transparent = true;
-              child.material.opacity = 0.18;
-              child.material.depthWrite = false;
-              child.renderOrder = 2;
-            } else {
-              child.renderOrder = 1;
-            }
-            meshCount++;
+        content.traverse((child) => {
+          if (!child.isMesh || !child.material) return;
+          child.material.side = THREE.DoubleSide;
+          child.material.transparent = false;
+          child.material.opacity = 1;
+          child.material.depthWrite = true;
+          child.renderOrder = 1;
+          if (child.name.toLowerCase() === 'brain') {
+            child.material.transparent = true;
+            child.material.opacity = 0.14;
+            child.material.depthWrite = false;
+            child.renderOrder = 2;
           }
+          child.material.needsUpdate = true;
+          structures[child.name.toLowerCase()] = child;
         });
-        console.log('[Anatomy3D] patched', meshCount, 'materials');
 
-        // Step 6: build structure map
-        model.traverse((child) => {
-          if (child.isMesh) {
-            const key = child.name.toLowerCase();
-            structures[key] = child;
-            console.log('  mesh name:', JSON.stringify(child.name), '→ key:', JSON.stringify(key));
-          }
-        });
-        console.log('[Anatomy3D] structures ready:', Object.keys(structures));
+        _applyDefaultRotation();
+        _renderLegend();
+        _setViewName('Default');
+        canvas.dataset.ready = 'true';
+        requestAnimationFrame(_resize);
       },
       undefined,
-      (err) => {
-        console.error('[Anatomy3D] Failed to load model:', err);
-      }
+      (error) => console.error('[Anatomy3D] Failed to load model:', error),
     );
   }
 
-  function _renderLoop() {
-    animFrame = requestAnimationFrame(_renderLoop);
-    if (renderer && scene && camera) {
-      renderer.render(scene, camera);
+  function _resize() {
+    if (!renderer || !canvas) return;
+    const width = Math.max(1, canvas.clientWidth);
+    const height = Math.max(1, canvas.clientHeight);
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+  }
+
+  function _renderLoop(now) {
+    requestAnimationFrame(_renderLoop);
+    if (animation && model) {
+      const progress = Math.min(1, (now - animation.started) / 400);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      model.rotation.x = THREE.MathUtils.lerp(animation.from.x, animation.to.x, eased);
+      model.rotation.y = THREE.MathUtils.lerp(animation.from.y, animation.to.y, eased);
+      model.rotation.z = THREE.MathUtils.lerp(animation.from.z, animation.to.z, eased);
+      if (progress === 1) animation = null;
     }
+    controls?.update();
+    renderer?.render(scene, camera);
   }
 
-
-  // ── Public API ────────────────────────────────────────────────────────────
-
-  /**
-   * Rotates the model to a specific absolute angle on the given axis.
-   * @param {'x'|'y'|'z'} axis
-   * @param {number} degrees
-   */
   function rotate(axis, degrees) {
-    if (!model) return;
+    if (!model || !['x', 'y', 'z'].includes(String(axis).toLowerCase())) return;
     _show();
-    axis = axis.toLowerCase();
-    if (!['x', 'y', 'z'].includes(axis)) return;
+    controls.reset();
+    const from = model.rotation.clone();
     model.rotation.set(0, 0, 0);
-    model.rotation[axis] = THREE.MathUtils.degToRad(degrees);
+    model.rotation[String(axis).toLowerCase()] = THREE.MathUtils.degToRad(Number(degrees));
+    const to = model.rotation.clone();
+    model.rotation.copy(from);
+    animation = { from, to, started: performance.now() };
+    _setViewName(viewNameFor(axis, Number(degrees)));
   }
 
-  /**
-   * Shows or hides a named mesh structure.
-   * structureName must match a key in the `structures` map (lowercased).
-   * @param {string} structureName
-   * @param {boolean} visible
-   */
   function toggleStructure(structureName, visible) {
     _show();
-    const key = structureName.toLowerCase().trim();
-    const mesh = structures[key];
-    if (mesh) {
-      mesh.visible = visible;
-    } else {
-      console.warn('[Anatomy3D] toggleStructure: unknown structure:', structureName);
-      console.log('[Anatomy3D] Available structures:', Object.keys(structures));
+    const mesh = structures[String(structureName).toLowerCase().trim()];
+    if (!mesh) {
+      console.warn('[Anatomy3D] Unknown structure:', structureName);
+      return;
     }
+    mesh.visible = Boolean(visible);
+    _renderLegend();
   }
 
-  /**
-   * Resets model to default orientation and makes all structures visible.
-   */
   function reset() {
     if (!model) return;
     _show();
-    model.rotation.set(0, 0, 0);
+    controls.reset();
+    animation = null;
     Object.values(structures).forEach((mesh) => { mesh.visible = true; });
+    _applyDefaultRotation();
+    _renderLegend();
+    _setViewName('Default');
   }
 
-  /**
-   * Hides the AR modal.
-   */
   function hide() {
-    if (modal) { modal.classList.remove('visible'); window.ORION_relayoutModals?.(); }
+    viewers.classList.add('ar-hidden');
+    window.dispatchEvent(new Event('resize'));
   }
 
   function _show() {
-    if (modal) {
-      modal.classList.add('visible');
-      window.ORION_relayoutModals?.();
-      // Re-sync renderer size after modal is repositioned by relayout
-      requestAnimationFrame(_resizeRenderer);
-    }
+    viewers.classList.remove('ar-hidden');
+    requestAnimationFrame(_resize);
   }
 
+  function _applyDefaultRotation() {
+    model.rotation.set(
+      THREE.MathUtils.degToRad(defaultView.x || 0),
+      THREE.MathUtils.degToRad(defaultView.y || 0),
+      0,
+    );
+  }
 
-  // ── Public interface ──────────────────────────────────────────────────────
-  return { init, rotate, toggleStructure, reset, hide };
+  function _renderLegend() {
+    const legend = document.getElementById('ar-legend');
+    legend.replaceChildren();
+    legendOrder.forEach((name) => {
+      const item = document.createElement('span');
+      item.className = `legend-item${structures[name]?.visible === false ? ' hidden' : ''}`;
+      const swatch = document.createElement('span');
+      swatch.className = 'legend-swatch';
+      swatch.style.background = colors[name];
+      const label = document.createElement('span');
+      label.textContent = displayNames[name] || name.replace(/_/g, ' ');
+      item.append(swatch, label);
+      legend.appendChild(item);
+    });
+  }
 
+  function _setViewName(name) {
+    document.getElementById('ar-view-name').textContent = name;
+  }
+
+  function viewNameFor(axis, degrees) {
+    const key = `${String(axis).toLowerCase()}:${Number(degrees)}`;
+    return ({
+      'y:0': 'Front',
+      'y:180': 'Back',
+      'y:90': 'Right side',
+      'y:-90': 'Left side',
+      'x:90': 'Top',
+      'x:-90': 'Bottom',
+    })[key] || 'Custom';
+  }
+
+  return { init, rotate, toggleStructure, reset, hide, viewNameFor };
 })();

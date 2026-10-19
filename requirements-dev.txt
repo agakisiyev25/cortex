@@ -8,3 +8,4 @@ fast-simplification==0.1.9
 Pillow
 pytest
 websockets
+playwright

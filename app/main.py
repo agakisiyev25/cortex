@@ -82,6 +82,11 @@ async def health():
     return {'status': 'ok', 'model': MODEL}
 
 
+@app.get('/api/case')
+async def api_case():
+    return {'case': cortex_tools.CASE, 'patient': cortex_tools._PATIENT_DATA}
+
+
 if os.environ.get('CORTEX_DEV') == '1':
     agent_tool_names = {
         getattr(tool, '__name__', getattr(tool, 'name', None))
