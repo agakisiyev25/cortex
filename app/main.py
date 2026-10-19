@@ -23,8 +23,8 @@ import os
 
 from dotenv import load_dotenv
 
-# load_dotenv MUST come before importing orion_orchestrator so that DEMO_AGENT_MODEL
-# is set when agent.py reads os.environ at import time.
+# load_dotenv MUST come before importing cortex_agent so that model settings
+# are set when agent.py reads os.environ at import time.
 load_dotenv()
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -37,7 +37,7 @@ from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.genai import types
 
-from orion_orchestrator import root_agent, log_ai_interaction
+from cortex_agent import root_agent, log_ai_interaction
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('orion')
@@ -50,28 +50,35 @@ logger = logging.getLogger('orion')
 session_service = InMemorySessionService()
 
 runner = Runner(
-    app_name='orion',
+    app_name='cortex',
     agent=root_agent,
     session_service=session_service,
 )
 
-APP_NAME = 'orion'
-DEMO_AGENT_MODEL = os.environ.get('DEMO_AGENT_MODEL', '')
+APP_NAME = 'cortex'
+MODEL = os.environ.get('GEMINI_LIVE_MODEL', 'gemini-3.8-live')
+USE_VERTEX = os.environ.get('GOOGLE_GENAI_USE_VERTEXAI', 'FALSE').strip().lower() in ('1', 'true')
+AUDIO_MIME = 'audio/pcm' if USE_VERTEX else 'audio/pcm;rate=16000'
 
-app = FastAPI(title='ORION Surgical Co-Pilot')
+app = FastAPI(title='CorteX')
 
 # Serve static files (JS, CSS, etc.)
 app.mount('/static', StaticFiles(directory='static'), name='static')
 
 
 @app.get('/')
-async def landing():
-    return FileResponse('static/landing.html')
+async def index():
+    return FileResponse('static/index.html')
 
 
 @app.get('/console')
 async def console():
     return FileResponse('static/index.html')
+
+
+@app.get('/health')
+async def health():
+    return {'status': 'ok', 'model': MODEL}
 
 
 # ---------------------------------------------------------------------------
@@ -94,30 +101,20 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
     await websocket.accept()
     logger.info('WebSocket connected: user=%s session=%s', user_id, session_id)
 
-    # Detect native audio model (vs. half-cascade text model)
-    is_native_audio = 'native-audio' in DEMO_AGENT_MODEL or 'native' in DEMO_AGENT_MODEL
-
     # Build RunConfig
-    if is_native_audio:
-        run_config = RunConfig(
-            streaming_mode=StreamingMode.BIDI,
-            response_modalities=['AUDIO'],
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name='Sadaltager',
-                    )
+    run_config = RunConfig(
+        streaming_mode=StreamingMode.BIDI,
+        response_modalities=['AUDIO'],
+        input_audio_transcription=types.AudioTranscriptionConfig(),
+        output_audio_transcription=types.AudioTranscriptionConfig(),
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=os.environ.get('VOICE_NAME', 'Puck'),
                 )
-            ),
-        )
-    else:
-        # Half-cascade or text-only fallback
-        run_config = RunConfig(
-            streaming_mode=StreamingMode.BIDI,
-            response_modalities=['TEXT'],
-        )
+            )
+        ),
+    )
 
     # Get or create session (supports reconnection)
     session = await session_service.get_session(
@@ -145,8 +142,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
 
         Message types:
           binary frames    → raw PCM audio (16kHz, Int16, mono)
-          JSON text        → {'type': 'text',        'content': '...'  }
-                          → {'type': 'image_frame',  'data': '<base64>'}
+          JSON text        → {'type': 'text', 'content': '...'}
 
         Exceptions are NOT caught here — they propagate so that
         asyncio.wait(FIRST_EXCEPTION) fires and tears down the session cleanly.
@@ -169,7 +165,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
                     chunk = bytes(_audio_buf[:_AUDIO_CHUNK_BYTES])
                     del _audio_buf[:_AUDIO_CHUNK_BYTES]
                     live_request_queue.send_realtime(
-                        types.Blob(data=chunk, mime_type='audio/pcm')
+                        types.Blob(data=chunk, mime_type=AUDIO_MIME)
                     )
 
             elif 'text' in message and message['text']:
@@ -189,17 +185,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
                                 role='user',
                                 parts=[types.Part(text=text_content)],
                             )
-                        )
-
-                elif msg_type == 'image_frame':
-                    # JPEG frame from the surgical video (sent at ~1 fps)
-                    b64_data = payload.get('data', '')
-                    if b64_data:
-                        if ',' in b64_data:
-                            b64_data = b64_data.split(',', 1)[1]
-                        jpeg_bytes = base64.b64decode(b64_data)
-                        live_request_queue.send_realtime(
-                            types.Blob(data=jpeg_bytes, mime_type='image/jpeg')
                         )
 
     async def downstream_task():
