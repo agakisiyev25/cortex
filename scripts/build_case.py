@@ -141,6 +141,7 @@ def normalise_image(image_data: np.ndarray) -> np.ndarray:
 def write_slices(
     image_data: np.ndarray,
     mask_data: np.ndarray,
+    brain_mask: np.ndarray,
     label_map: dict[int, str],
     voxel_sizes: tuple[float, ...],
     out_dir: Path,
@@ -150,9 +151,22 @@ def write_slices(
     slices_dir = out_dir / "slices"
     slices_dir.mkdir(parents=True)
     grey = normalise_image(image_data)
-    nx, ny, nz = image_data.shape
-    physical_width = nx * voxel_sizes[0]
-    physical_height = ny * voxel_sizes[1]
+    nx, ny, _ = image_data.shape
+    brain_projection = np.any(
+        brain_mask[:, :, slice_start:slice_end + 1],
+        axis=2,
+    )
+    brain_x, brain_y = np.where(brain_projection)
+    crop_width = int(brain_x.max() - brain_x.min() + 1)
+    crop_height = int(brain_y.max() - brain_y.min() + 1)
+    pad_x = int(np.ceil(crop_width * 0.06))
+    pad_y = int(np.ceil(crop_height * 0.06))
+    x_start = max(0, int(brain_x.min()) - pad_x)
+    x_end = min(nx, int(brain_x.max()) + 1 + pad_x)
+    y_start = max(0, int(brain_y.min()) - pad_y)
+    y_end = min(ny, int(brain_y.max()) + 1 + pad_y)
+    physical_width = (x_end - x_start) * voxel_sizes[0]
+    physical_height = (y_end - y_start) * voxel_sizes[1]
     scale = 512.0 / max(physical_width, physical_height)
     output_size = (
         max(1, round(physical_width * scale)),
@@ -161,8 +175,8 @@ def write_slices(
     font = ImageFont.load_default()
 
     for output_index, k in enumerate(range(slice_start, slice_end + 1), start=1):
-        sl = grey[:, :, k]
-        segmentation = mask_data[:, :, k]
+        sl = grey[x_start:x_end, y_start:y_end, k]
+        segmentation = mask_data[x_start:x_end, y_start:y_end, k]
         disp = np.flipud(sl.T)[:, ::-1]
         mask_disp = np.flipud(segmentation.T)[:, ::-1]
         rgb = np.repeat(disp[:, :, None], 3, axis=2).astype(np.float32)
@@ -381,6 +395,7 @@ def build_case(args: argparse.Namespace) -> None:
     slice_count = write_slices(
         image_data,
         mask_data,
+        brain_mask,
         label_map,
         image.header.get_zooms(),
         args.out,
