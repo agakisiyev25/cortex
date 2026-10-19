@@ -29,6 +29,12 @@ const Drawer = (() => {
     milestone: 'Milestone',
     note: 'Note',
   };
+  const widePatientFields = new Set([
+    'diagnosis',
+    'procedure',
+    'allergies',
+    'medications',
+  ]);
 
   function init(kase) {
     root = document.getElementById('drawer');
@@ -67,14 +73,20 @@ const Drawer = (() => {
     const rows = (fields || []).map((field) => {
       const note = field.note || '';
       const noteClass = normalNotes.has(note) ? '' : ' attention';
+      const showNote = note && (single || !normalNotes.has(note));
       return `
-        <div class="patient-row ${single ? 'single' : ''} ${field.field === 'allergies' ? 'allergies' : ''}">
+        <div class="patient-row ${single ? 'single' : ''} ${field.field === 'allergies' ? 'allergies' : ''} ${widePatientFields.has(field.field) ? 'wide' : ''}">
           <div class="patient-label">${_overlayEscape(field.label)}</div>
           <div class="patient-value">${_overlayEscape(field.value)}</div>
-          ${note ? `<div class="patient-note${noteClass}">${_overlayEscape(note)}</div>` : ''}
+          ${showNote ? `<div class="patient-note${noteClass}">${_overlayEscape(note)}</div>` : ''}
         </div>`;
     }).join('');
-    _card('patient', 'Patient data', 'var(--accent)', rows);
+    _card(
+      'patient',
+      'Patient data',
+      'var(--accent)',
+      single ? rows : `<div class="patient-grid">${rows}</div>`,
+    );
   }
 
   function showVolumes(volumes, sourceNote) {

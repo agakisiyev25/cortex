@@ -39,6 +39,9 @@ async def capture(width: int, height: int, browser) -> None:
     await page.goto(BASE_URL, wait_until="networkidle")
     await page.wait_for_function("window.cortexDemo !== undefined")
     await page.wait_for_selector('#ar-canvas[data-ready="true"]')
+    procedure = await page.evaluate(
+        "async () => (await (await fetch('/api/case')).json()).patient.procedure.value"
+    )
 
     await _shot(page, "01_initial", width, height)
 
@@ -58,10 +61,11 @@ async def capture(width: int, height: int, browser) -> None:
         "{event_type: 'timeout_complete', note: 'WHO time-out verified'})"
     )
     await page.evaluate(
-        "window.cortexDemo.call('show_agent_summary', {"
+        "procedure => window.cortexDemo.call('show_agent_summary', {"
         "title: 'WHO Surgical Safety Checklist', content: '', bullets: ["
-        "'Patient: 46-year-old male', 'Procedure: …', "
-        "'Allergies: Cefazolin (hives), Latex', 'Essential imaging displayed']})"
+        "'Patient: 46-year-old male', `Procedure: ${procedure}`, "
+        "'Allergies: Cefazolin (hives), Latex', 'Essential imaging displayed']})",
+        procedure,
     )
     await _shot(page, "04_timeout", width, height)
 

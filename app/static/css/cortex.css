@@ -96,10 +96,14 @@ button { color: inherit; }
 .overlay-close { display: grid; width: 28px; height: 28px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; font-size: 20px; }
 .overlay-close:hover { background: rgba(255, 255, 255, .06); color: var(--text); }
 .drawer-card-body { padding: 10px 14px 13px 16px; }
+.patient-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; }
 .patient-row { padding: 8px 0; border-bottom: 1px solid rgba(34, 48, 64, .7); }
 .patient-row:last-child { border-bottom: 0; }
 .patient-label { color: var(--muted); font-size: 12px; }
 .patient-value { margin-top: 2px; font-size: 15px; font-weight: 600; }
+.patient-grid .patient-row.wide { grid-column: 1 / -1; }
+.patient-grid .patient-label { font-size: 11px; }
+.patient-grid .patient-value { font-size: 14px; font-weight: 600; }
 .patient-row.single .patient-value { font-size: 28px; }
 .patient-row.allergies .patient-value { color: var(--danger); }
 .patient-note { margin-top: 2px; color: var(--muted); font-size: 12px; }
@@ -117,7 +121,8 @@ button { color: inherit; }
 .log-time { color: var(--muted); font: 500 10px var(--mono), monospace; }
 .log-type { font-weight: 600; } .log-note { margin-top: 2px; color: var(--muted); }
 
-#banner { position: absolute; z-index: 30; top: 12px; left: 50%; width: min(640px, calc(100% - 24px)); transform: translateX(-50%); pointer-events: none; }
+#banner { position: absolute; z-index: 30; top: 56px; left: 12px; width: 640px; max-width: calc(50% - 24px); pointer-events: none; }
+#viewers.mri-hidden #banner { left: 12px; max-width: calc(100% - 436px); }
 .drug-banner { padding: 12px 16px; border: 1px solid var(--ok); border-radius: 12px; background: rgba(63, 185, 80, .14); box-shadow: 0 14px 38px rgba(0, 0, 0, .4); pointer-events: auto; }
 .drug-banner.caution { border-color: var(--danger); background: rgba(248, 81, 73, .14); }
 .drug-banner-title { color: var(--ok); font-size: 14px; font-weight: 700; }
@@ -146,8 +151,9 @@ button { color: inherit; }
   #app { grid-template-columns: minmax(0, 1fr) 320px; }
   .prototype-note { display: none; }
   #case-strip { font-size: 12px; }
-  #drawer { width: 360px; }
 }
+
+@media (max-width: 1499px) { #drawer { width: 340px; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
