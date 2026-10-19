@@ -56,29 +56,43 @@
     </main>
 
     <aside id="rail">
-      <section id="orb-section">
-        <button id="orion-orb" class="orb offline" type="button" aria-label="Connect to CorteX">
-          <span class="orb-core"></span><span class="orb-ripple"></span>
+      <section class="voice">
+        <div class="voice-top">
+          <h2>Voice</h2>
+          <div class="seg" role="group" aria-label="Talk mode">
+            <button id="voice-mode-ptt" type="button" aria-pressed="true">Push-to-talk</button>
+            <button id="voice-mode-handsfree" type="button" aria-pressed="false">Hands-free</button>
+          </div>
+        </div>
+        <button id="voice-trace" class="trace-well" type="button" data-state="offline" aria-label="Hold to talk to CorteX">
+          <canvas id="trace"></canvas>
+          <span class="channel">CorteX</span>
         </button>
-        <div id="orion-status-label">Tap to connect</div>
-        <button id="voice-mode-toggle" type="button" aria-pressed="false">Push-to-talk</button>
-        <button id="disconnect-button" type="button" hidden>Disconnect</button>
+        <div class="voice-state">
+          <b id="vs-main">Tap to connect</b>
+          <span id="vs-sub">CorteX is offline</span>
+          <button class="link" id="disconnect-button" type="button" hidden>Disconnect</button>
+        </div>
       </section>
 
-      <section id="conversation-section" class="rail-section">
+      <section id="conversation-section" class="convo">
         <h2>Conversation</h2>
-        <div id="transcript-log" aria-live="polite"></div>
+        <div id="transcript-log" class="turns" aria-live="polite">
+          <p class="empty">Say “CorteX, brief me on this patient” to start.</p>
+        </div>
       </section>
 
-      <section id="actions-section" class="rail-section">
+      <section id="actions-section" class="activity">
         <h2>Actions</h2>
-        <div id="actions-feed" aria-live="polite"></div>
+        <ol id="actions-feed" aria-live="polite"><li class="empty-row">Actions CorteX takes appear here.</li></ol>
       </section>
 
-      <form id="typed-command">
+      <form id="typed-command" class="command">
         <label class="sr-only" for="typed-input">Type a command</label>
-        <input id="typed-input" placeholder="Type a command…" autocomplete="off">
-        <button type="submit">Send</button>
+        <input id="typed-input" placeholder="Type a command" autocomplete="off">
+        <button type="submit" aria-label="Send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+        </button>
       </form>
     </aside>
   </div>
@@ -89,6 +103,7 @@
   <script src="/static/js/ct-viewer.js"></script>
   <script src="/static/js/anatomy-3d.js"></script>
   <script src="/static/js/overlays.js"></script>
+  <script src="/static/js/voice-trace.js"></script>
   <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

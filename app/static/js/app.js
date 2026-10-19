@@ -6,13 +6,15 @@ import { startAudioRecorderWorklet, stopMicrophone } from './audio-recorder.js';
 const CONFIG = Object.assign({ caseUrl: '/static/case/case.json' }, window.ORION_CONFIG || {});
 const isDemo = new URLSearchParams(window.location.search).get('demo') === '1';
 
-const orionOrb = document.getElementById('orion-orb');
-const orionStatusLabel = document.getElementById('orion-status-label');
+const voiceTrace = document.getElementById('voice-trace');
+const voiceStateMain = document.getElementById('vs-main');
+const voiceStateSub = document.getElementById('vs-sub');
 const liveStatus = document.getElementById('live-status');
 const liveStatusText = document.getElementById('live-status-text');
 const sessionTimer = document.getElementById('session-timer');
 const disconnectButton = document.getElementById('disconnect-button');
-const voiceModeToggle = document.getElementById('voice-mode-toggle');
+const voiceModePtt = document.getElementById('voice-mode-ptt');
+const voiceModeHandsFree = document.getElementById('voice-mode-handsfree');
 const transcriptLog = document.getElementById('transcript-log');
 const actionsFeed = document.getElementById('actions-feed');
 const typedCommand = document.getElementById('typed-command');
@@ -31,12 +33,13 @@ let currentOrionEntry = null;
 let currentSurgeonEntry = null;
 let handsFree = false;
 let talking = false;
-let orbState = 'offline';
+let voiceState = 'offline';
 let thinkingTimer = null;
 let speakingTimer = null;
 let timerInterval = null;
 let sessionStarted = 0;
 let spaceHeld = false;
+const transcriptTimers = new WeakMap();
 
 const _dispatchedTools = new Map();
 const TOOL_DEDUP_MS = 4000;
@@ -158,6 +161,7 @@ function _bargeIn() {
   audioSuppressed = true;
   _lastSuppressTime = Date.now();
   if (audioPlayerNode) audioPlayerNode.port.postMessage({ command: 'endOfAudio' });
+  _finishTranscript(currentOrionEntry);
   currentOrionEntry = null;
 }
 
@@ -170,7 +174,7 @@ function audioRecorderHandler(pcmData) {
       energy += sample * sample;
     }
     const rms = Math.sqrt(energy / Math.max(1, samples.length));
-    orionOrb.style.setProperty('--orb-scale', String(1 + Math.min(rms * 4, 0.25)));
+    VoiceTrace.setLevel(Math.min(1, rms * 6));
   }
   if (ws?.readyState === WebSocket.OPEN && (handsFree || talking)) {
     ws.send(pcmData);
@@ -188,14 +192,14 @@ function startTalking() {
 function stopTalking() {
   if (!talking) return;
   talking = false;
-  orionOrb.style.setProperty('--orb-scale', '1');
+  VoiceTrace.setLevel(0);
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'audio_stream_end' }));
   }
   setStatus('thinking');
   clearTimeout(thinkingTimer);
   thinkingTimer = setTimeout(() => {
-    if (orbState === 'thinking') setStatus('active');
+    if (voiceState === 'thinking') setStatus('active');
   }, 8000);
 }
 
@@ -204,7 +208,7 @@ function _markSpeaking() {
   setStatus('speaking');
   clearTimeout(speakingTimer);
   speakingTimer = setTimeout(() => {
-    if (ws?.readyState === WebSocket.OPEN && orbState === 'speaking') setStatus('active');
+    if (ws?.readyState === WebSocket.OPEN && voiceState === 'speaking') setStatus('active');
   }, 600);
 }
 
@@ -274,7 +278,10 @@ function handleServerEvent(jsonString) {
 
   if (event.interrupted) _bargeIn();
   if (event.turnComplete ?? event.turn_complete) {
+    _finishTranscript(currentSurgeonEntry);
+    _finishTranscript(currentOrionEntry);
     currentSurgeonEntry = null;
+    currentOrionEntry = null;
   }
 }
 
@@ -398,30 +405,32 @@ function addAction(name, args, response) {
     hide_all_overlays: 'Display cleared',
     show_only_ar: '3D only',
   };
-  const category = name.startsWith('display_') || name === 'hide_patient_data' ? 'patient'
-    : ['navigate_scan', 'jump_to_landmark', 'hide_scan'].includes(name) ? 'mri'
-      : ['rotate_model', 'toggle_structure', 'reset_3d_view', 'hide_3d', 'get_tumor_measurements'].includes(name) ? 'model'
-        : name === 'check_drug_safety' ? 'drug'
-          : ['get_surgical_phase', 'hide_surgical_checklist', 'log_event', 'show_event_log', 'hide_event_log'].includes(name) ? 'procedure'
-            : 'display';
-
-  const row = document.createElement('div');
-  row.className = 'action-row';
-  row.innerHTML = `<time class="action-time">${new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}</time><span class="action-dot ${category}"></span><span>${escapeHtml(texts[name] || name)}</span>`;
+  actionsFeed.querySelector('.empty-row')?.remove();
+  actionsFeed.querySelectorAll('.fresh').forEach((item) => item.classList.remove('fresh'));
+  const row = document.createElement('li');
+  row.className = `fresh${name === 'check_drug_safety' && response?.safety_status === 'caution' ? ' alarm' : ''}`;
+  row.innerHTML = `<time>${new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit' })}</time><span>${escapeHtml(texts[name] || name)}</span>`;
   actionsFeed.prepend(row);
   while (actionsFeed.children.length > 50) actionsFeed.lastElementChild.remove();
 }
 
 function setStatus(state) {
-  orbState = state;
-  orionOrb.className = `orb ${state === 'active' ? 'idle' : state}`;
-  const connected = ['active', 'talking', 'thinking', 'speaking'].includes(state);
+  voiceState = state;
+  const traceState = state === 'active' || state === 'demo' ? 'idle' : state;
+  voiceTrace.dataset.state = traceState;
+  VoiceTrace.setState(traceState);
+  const connected = ['active', 'talking', 'thinking', 'speaking', 'demo'].includes(state);
   disconnectButton.hidden = !connected;
   const labels = {
-    offline: 'Tap to connect', connecting: 'Connecting…', active: 'Hold SPACE or the orb to talk',
-    talking: 'Listening…', thinking: 'Thinking…', speaking: 'Speaking…', demo: 'Demo mode',
+    offline: ['Tap to connect', 'CorteX is offline'],
+    connecting: ['Connecting', ''],
+    active: handsFree ? ['Listening hands-free', ''] : ['Hold Space to talk', 'or hold the trace'],
+    talking: ['Listening', 'Release to send'],
+    thinking: ['Thinking', ''],
+    speaking: ['Speaking', 'Hold Space to interrupt'],
+    demo: ['Hold Space to talk', 'or hold the trace'],
   };
-  orionStatusLabel.textContent = labels[state] || labels.offline;
+  [voiceStateMain.textContent, voiceStateSub.textContent] = labels[state] || labels.offline;
 
   liveStatus.dataset.state = 'offline';
   if (state === 'demo') {
@@ -456,18 +465,30 @@ function _upsertTranscript(speaker, text) {
   if (!text?.trim()) return;
   const isSurgeon = speaker === 'surgeon';
   const current = isSurgeon ? currentSurgeonEntry : currentOrionEntry;
+  transcriptLog.querySelector('.empty')?.remove();
   if (current) {
     current.querySelector('.text').textContent = text;
   } else {
     const entry = document.createElement('div');
-    entry.className = `transcript-entry ${speaker}`;
-    entry.innerHTML = `<div class="speaker">${isSurgeon ? 'Surgeon' : 'CorteX'}</div><div class="text">${escapeHtml(text)}</div>`;
+    entry.className = `turn ${speaker === 'orion' ? 'cortex' : 'surgeon'}`;
+    entry.innerHTML = `<span class="who">${isSurgeon ? 'Surgeon' : 'CorteX'}</span><p class="text">${escapeHtml(text)}</p>`;
     transcriptLog.appendChild(entry);
     while (transcriptLog.children.length > 30) transcriptLog.firstElementChild.remove();
     if (isSurgeon) currentSurgeonEntry = entry;
     else currentOrionEntry = entry;
   }
+  const entry = isSurgeon ? currentSurgeonEntry : currentOrionEntry;
+  entry.classList.add('streaming');
+  clearTimeout(transcriptTimers.get(entry));
+  transcriptTimers.set(entry, setTimeout(() => entry.classList.remove('streaming'), 1200));
   transcriptLog.scrollTop = transcriptLog.scrollHeight;
+}
+
+function _finishTranscript(entry) {
+  if (!entry) return;
+  clearTimeout(transcriptTimers.get(entry));
+  transcriptTimers.delete(entry);
+  entry.classList.remove('streaming');
 }
 
 function escapeHtml(value) {
@@ -494,24 +515,29 @@ function installDemoApi() {
     say(role, text) {
       const speaker = String(role).toLowerCase() === 'surgeon' ? 'surgeon' : 'orion';
       _upsertTranscript(speaker, text);
-      if (speaker === 'surgeon') currentSurgeonEntry = null;
-      else currentOrionEntry = null;
+      if (speaker === 'surgeon') {
+        _finishTranscript(currentSurgeonEntry);
+        currentSurgeonEntry = null;
+      } else {
+        _finishTranscript(currentOrionEntry);
+        currentOrionEntry = null;
+      }
     },
   };
 }
 
-orionOrb.addEventListener('click', () => {
+voiceTrace.addEventListener('click', () => {
   if (!isDemo && ws?.readyState !== WebSocket.OPEN) connect();
 });
-orionOrb.addEventListener('pointerdown', (event) => {
+voiceTrace.addEventListener('pointerdown', (event) => {
   if (ws?.readyState === WebSocket.OPEN && !handsFree) {
     event.preventDefault();
-    orionOrb.setPointerCapture?.(event.pointerId);
+    voiceTrace.setPointerCapture?.(event.pointerId);
     startTalking();
   }
 });
-orionOrb.addEventListener('pointerup', stopTalking);
-orionOrb.addEventListener('pointercancel', stopTalking);
+voiceTrace.addEventListener('pointerup', stopTalking);
+voiceTrace.addEventListener('pointercancel', stopTalking);
 
 document.addEventListener('keydown', (event) => {
   if (event.code !== 'Space' || event.repeat || handsFree || document.activeElement === typedInput) return;
@@ -527,13 +553,16 @@ document.addEventListener('keyup', (event) => {
   stopTalking();
 });
 
-voiceModeToggle.addEventListener('click', () => {
-  handsFree = !handsFree;
+function setHandsFree(enabled) {
+  handsFree = enabled;
   if (talking) stopTalking();
-  voiceModeToggle.setAttribute('aria-pressed', String(handsFree));
-  voiceModeToggle.textContent = handsFree ? 'Hands-free' : 'Push-to-talk';
+  voiceModePtt.setAttribute('aria-pressed', String(!handsFree));
+  voiceModeHandsFree.setAttribute('aria-pressed', String(handsFree));
   if (ws?.readyState === WebSocket.OPEN) setStatus('active');
-});
+}
+
+voiceModePtt.addEventListener('click', () => setHandsFree(false));
+voiceModeHandsFree.addEventListener('click', () => setHandsFree(true));
 disconnectButton.addEventListener('click', disconnect);
 
 typedCommand.addEventListener('submit', async (event) => {
@@ -541,6 +570,8 @@ typedCommand.addEventListener('submit', async (event) => {
   const value = typedInput.value.trim();
   if (!value) return;
   _upsertTranscript('surgeon', value);
+  _finishTranscript(currentSurgeonEntry);
+  _finishTranscript(currentOrionEntry);
   currentSurgeonEntry = null;
   currentOrionEntry = null;
   typedInput.value = '';
