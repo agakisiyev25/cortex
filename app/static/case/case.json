@@ -1,0 +1,41 @@
+{
+  "case_id": "CASE-001",
+  "source": {
+    "image": "image.nii.gz",
+    "mask": "mask.nii.gz",
+    "label_map": {
+      "1": "non_enhancing_core",
+      "2": "edema",
+      "3": "enhancing_tumor",
+      "4": "resection_cavity"
+    }
+  },
+  "slices": {
+    "count": 160,
+    "base_url": "/static/case/slices",
+    "pad": 3,
+    "plane": "axial",
+    "order": "inferior_to_superior"
+  },
+  "landmarks": {
+    "tumor": 96,
+    "tumor_top": 120,
+    "tumor_bottom": 72,
+    "mid_brain": 81,
+    "resection_cavity": 96
+  },
+  "volumes_cm3": {
+    "enhancing_tumor": 8.4,
+    "non_enhancing_core": 3.1,
+    "edema": 45.7,
+    "resection_cavity": 1.0
+  },
+  "structures": [
+    "brain",
+    "enhancing_tumor",
+    "non_enhancing_core",
+    "edema",
+    "resection_cavity"
+  ],
+  "model_url": "/static/case/model.glb"
+}
