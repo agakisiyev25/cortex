@@ -193,6 +193,9 @@ function stopTalking() {
   talking = false;
   VoiceTrace.setLevel(0);
   if (ws?.readyState === WebSocket.OPEN) {
+    for (let chunk = 0; chunk < 100; chunk += 1) {
+      ws.send(new Int16Array(128).buffer);
+    }
     ws.send(JSON.stringify({ type: 'audio_stream_end' }));
   }
   audioSuppressed = false;

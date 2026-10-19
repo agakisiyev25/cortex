@@ -42,6 +42,10 @@ import cortex_agent.tools as cortex_tools
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('orion')
+CORTEX_DEBUG = os.environ.get('CORTEX_DEBUG') == '1'
+HAS_AUDIO_STREAM_END = hasattr(LiveRequestQueue, 'send_audio_stream_end')
+if not HAS_AUDIO_STREAM_END:
+    logger.warning('Installed google-adk has no send_audio_stream_end; using trailing silence only')
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +218,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
                             types.Blob(data=bytes(_audio_buf), mime_type=AUDIO_MIME)
                         )
                         _audio_buf.clear()
-                    live_request_queue.send_audio_stream_end()
+                    if HAS_AUDIO_STREAM_END:
+                        live_request_queue.send_audio_stream_end()
 
     async def downstream_task():
         """
@@ -234,6 +239,27 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
           try:
             async for event in live_events:
                 event_json = event.model_dump_json(exclude_none=True, by_alias=True)
+                if CORTEX_DEBUG:
+                    event_data = json.loads(event_json)
+                    input_text = (event_data.get('inputTranscription') or {}).get('text')
+                    output_text = (event_data.get('outputTranscription') or {}).get('text')
+                    function_calls = [
+                        call.get('name')
+                        for part in (event_data.get('content') or {}).get('parts', [])
+                        if (call := part.get('functionCall'))
+                    ]
+                    logger.info(
+                        'Live event: input_transcription=%r output_transcription=%r '
+                        'turn_complete=%s interrupted=%s function_call=%r '
+                        'error_code=%r error_message=%r',
+                        input_text,
+                        output_text,
+                        event_data.get('turnComplete', False),
+                        event_data.get('interrupted', False),
+                        function_calls or None,
+                        event_data.get('errorCode'),
+                        event_data.get('errorMessage'),
+                    )
                 await websocket.send_text(event_json)
 
           except (ValueError, KeyError, TypeError) as exc:
