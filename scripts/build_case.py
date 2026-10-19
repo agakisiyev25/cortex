@@ -177,11 +177,23 @@ def write_slices(
         image = Image.fromarray(np.rint(rgb).astype(np.uint8), mode="RGB")
         image = image.resize(output_size, Image.Resampling.LANCZOS)
         draw = ImageDraw.Draw(image)
-        bounds = draw.textbbox((0, 0), "R", font=font)
-        text_height = bounds[3] - bounds[1]
+        right_bounds = draw.textbbox((0, 0), "R", font=font)
+        text_height = right_bounds[3] - right_bounds[1]
         draw.text(
-            (12, (image.height - text_height) / 2 - bounds[1]),
+            (12, (image.height - text_height) / 2 - right_bounds[1]),
             "R",
+            fill=(255, 255, 255),
+            font=font,
+        )
+        left_bounds = draw.textbbox((0, 0), "L", font=font)
+        text_width = left_bounds[2] - left_bounds[0]
+        text_height = left_bounds[3] - left_bounds[1]
+        draw.text(
+            (
+                image.width - 12 - text_width - left_bounds[0],
+                (image.height - text_height) / 2 - left_bounds[1],
+            ),
+            "L",
             fill=(255, 255, 255),
             font=font,
         )
@@ -311,6 +323,7 @@ def write_model(
 
 def compute_tumor_side(
     mask_data: np.ndarray,
+    brain_mask: np.ndarray,
     label_map: dict[int, str],
     affine: np.ndarray,
 ) -> str:
@@ -325,9 +338,11 @@ def compute_tumor_side(
         selected = mask_data == labels_by_name["resection_cavity"]
     if not selected.any():
         return "right"
-    centroid_voxel = np.argwhere(selected).mean(axis=0)
-    centroid_ras = nib.affines.apply_affine(affine, centroid_voxel)
-    return "right" if centroid_ras[0] > 0 else "left"
+    tumor_centroid_voxel = np.argwhere(selected).mean(axis=0)
+    brain_centroid_voxel = np.argwhere(brain_mask).mean(axis=0)
+    tumor_centroid_ras = nib.affines.apply_affine(affine, tumor_centroid_voxel)
+    brain_centroid_ras = nib.affines.apply_affine(affine, brain_centroid_voxel)
+    return "right" if tumor_centroid_ras[0] > brain_centroid_ras[0] else "left"
 
 
 def build_case(args: argparse.Namespace) -> None:
@@ -392,7 +407,7 @@ def build_case(args: argparse.Namespace) -> None:
     except ValueError as exc:
         raise SystemExit(f"error: could not build model: {exc}") from exc
 
-    tumor_side = compute_tumor_side(mask_data, label_map, image.affine)
+    tumor_side = compute_tumor_side(mask_data, brain_mask, label_map, image.affine)
     default_view = {"x": 15, "y": 35 if tumor_side == "right" else -35}
     print("Volumes (cm³):", json.dumps(volumes, sort_keys=True))
     print("Tumor side:", tumor_side)

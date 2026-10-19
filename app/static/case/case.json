@@ -38,10 +38,10 @@
     "resection_cavity"
   ],
   "model_url": "/static/case/model.glb",
-  "tumor_side": "left",
+  "tumor_side": "right",
   "default_view": {
     "x": 15,
-    "y": -35
+    "y": 35
   },
   "mask_source": "Reference segmentation (MU-Glioma-Post)",
   "modality": "T1c",
