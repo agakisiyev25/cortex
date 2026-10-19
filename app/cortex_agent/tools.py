@@ -36,6 +36,7 @@ SCAN_TOTAL_SLICES: int = CASE['slices']['count']
 SCAN_LANDMARKS: dict[str, int] = CASE['landmarks']
 CASE_STRUCTURES: list[str] = CASE['structures']
 CASE_VOLUMES: dict[str, float] = CASE['volumes_cm3']
+SIDE = CASE.get('tumor_side', 'right')
 
 # Scan navigation state persists across multiple navigate_scan calls.
 _scan_state: dict = {'current_slice': SCAN_LANDMARKS['tumor']}
@@ -49,8 +50,8 @@ _PATIENT_DATA: dict[str, dict] = {
     'bp':          {'value': '124/78 mmHg', 'label': 'Blood Pressure', 'note': 'Last recorded 07:10'},
     'weight':      {'value': '78 kg', 'label': 'Weight', 'note': ''},
     'age':         {'value': '46 years', 'label': 'Age', 'note': 'Male'},
-    'diagnosis':   {'value': 'Recurrent glioblastoma — right frontal', 'label': 'Diagnosis', 'note': 'Recurrence on follow-up MRI'},
-    'procedure':   {'value': 'Right frontal craniotomy for tumor resection', 'label': 'Procedure', 'note': 'Neuronavigation-guided'},
+    'diagnosis':   {'value': f'Recurrent glioma — {SIDE} hemisphere', 'label': 'Diagnosis', 'note': 'Recurrence on follow-up MRI'},
+    'procedure':   {'value': f'{SIDE.capitalize()} craniotomy for tumor resection', 'label': 'Procedure', 'note': 'Neuronavigation-guided'},
     'allergies':   {'value': 'Cefazolin (hives), Latex', 'label': 'Allergies', 'note': 'Latex-free room required'},
     'medications': {'value': 'Dexamethasone 4 mg BID, Levetiracetam 500 mg BID',
                     'label': 'Medications', 'note': 'Steroid and seizure prophylaxis continued'},
@@ -410,15 +411,15 @@ def get_tumor_measurements() -> dict:
     size or measurements, or for the volumes of the tumor regions.
     Examples: "how big is the tumor?", "tumor volume", "what are the measurements?"
     """
-    labels = {
-        'enhancing_tumor': 'Enhancing',
-        'non_enhancing_core': 'Core',
-        'edema': 'Edema',
-        'resection_cavity': 'Cavity',
-    }
+    region_order = (
+        'enhancing_tumor',
+        'non_enhancing_core',
+        'edema',
+        'resection_cavity',
+    )
     value = ' · '.join(
-        f'{labels[name]} {CASE_VOLUMES[name]} cm³'
-        for name in labels
+        f'{CASE["display_names"][name]} {CASE_VOLUMES[name]} cm³'
+        for name in region_order
         if name in CASE_VOLUMES
     )
     return {
@@ -430,7 +431,7 @@ def get_tumor_measurements() -> dict:
             'field': 'tumor_volumes',
             'label': 'Tumor volumes',
             'value': value,
-            'note': 'From CorteX segmentation of ' + CASE['source']['image'],
+            'note': f"{CASE['mask_source']} · {CASE['modality']}",
         },
     }
 
@@ -586,7 +587,6 @@ def log_ai_interaction(surgeon_said: str, orion_said: str) -> dict | None:
         'note': ' | '.join(parts),
         'timestamp': timestamp,
     }
-    _SESSION_LOG.append(entry)
     return entry
 
 
@@ -831,8 +831,7 @@ def check_drug_safety(drug_name: str) -> dict:
 
 def show_only_ar() -> dict:
     """
-    Use this tool when the surgeon asks to keep ONLY the 3D anatomy model
-    and close or hide everything else (CT scan, patient data, checklists).
+    Hide the MRI and all cards, show only the 3D model.
     Examples:
       "only keep the 3D model"
       "keep only the anatomy"
@@ -875,9 +874,8 @@ def show_agent_summary(title: str, content: str, bullets: list = None) -> dict:
 
 def hide_all_overlays() -> dict:
     """
-    Use this tool when the surgeon asks to clear, hide, close, or dismiss ALL
-    active overlays simultaneously — CT scan, clinical data, 3D model, surgical
-    checklist, operative log, and any summary or complication panels.
+    Clears patient cards, checklists, logs, drug alerts and summaries; the MRI
+    and 3D views stay.
     Trigger on ANY of the following (and natural variations):
       "clear everything"        "hide everything"
       "hide all overlays"       "hide all"

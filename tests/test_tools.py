@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import importlib
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
+from fastapi.testclient import TestClient
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 def test_successful_tools_have_render_commands(cortex_case: SimpleNamespace) -> None:
     tools = cortex_case.tools
@@ -56,6 +63,11 @@ def test_drug_safety(cortex_case: SimpleNamespace) -> None:
 def test_tumor_measurements(cortex_case: SimpleNamespace) -> None:
     result = cortex_case.tools.get_tumor_measurements()
     assert result["volumes_cm3"] == cortex_case.case["volumes_cm3"]
+    assert result["render_command"]["value"] == (
+        "Enhancing tumor 8.4 cm³ · Necrotic core 3.1 cm³ · "
+        "Edema 45.7 cm³ · Resection cavity 1.0 cm³"
+    )
+    assert result["render_command"]["note"] == "CorteX segmentation · T1c"
 
 
 def test_event_log(cortex_case: SimpleNamespace) -> None:
@@ -63,6 +75,13 @@ def test_event_log(cortex_case: SimpleNamespace) -> None:
     tools.log_event("incision")
     entries = tools.show_event_log()["render_command"]["entries"]
     assert any(entry["type"] == "incision" for entry in entries)
+
+
+def test_ai_interaction_is_not_added_to_event_log(cortex_case: SimpleNamespace) -> None:
+    tools = cortex_case.tools
+    tools.log_ai_interaction("a", "b")
+    entries = tools.show_event_log()["render_command"]["entries"]
+    assert not any(entry["type"] == "ai_interaction" for entry in entries)
 
 
 def test_structure_grounding(cortex_case: SimpleNamespace) -> None:
@@ -97,3 +116,33 @@ def test_root_agent(cortex_case: SimpleNamespace) -> None:
         "hide_all_overlays",
         "show_only_ar",
     ]
+
+
+def test_dev_tool_route_is_environment_gated(
+    cortex_case: SimpleNamespace,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(ROOT / "app")
+
+    monkeypatch.delenv("CORTEX_DEV", raising=False)
+    sys.modules.pop("main", None)
+    production_main = importlib.import_module("main")
+    production_paths = {route.path for route in production_main.app.routes}
+    assert "/dev/tool/{name}" not in production_paths
+
+    monkeypatch.setenv("CORTEX_DEV", "1")
+    sys.modules.pop("main", None)
+    development_main = importlib.import_module("main")
+    development_paths = {route.path for route in development_main.app.routes}
+    assert "/dev/tool/{name}" in development_paths
+
+    client = TestClient(development_main.app)
+    response = client.post(
+        "/dev/tool/display_patient_data",
+        json={"field": "hemoglobin"},
+    )
+    assert response.status_code == 200
+    assert response.json()["response"]["field"] == "hemoglobin"
+    assert client.post("/dev/tool/not_a_tool", json={}).status_code == 404
+
+    sys.modules.pop("main", None)

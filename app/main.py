@@ -27,7 +27,7 @@ from dotenv import load_dotenv
 # are set when agent.py reads os.environ at import time.
 load_dotenv()
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -37,7 +37,8 @@ from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.agents.live_request_queue import LiveRequestQueue
 from google.genai import types
 
-from cortex_agent import root_agent, log_ai_interaction
+from cortex_agent import root_agent
+import cortex_agent.tools as cortex_tools
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger('orion')
@@ -79,6 +80,21 @@ async def console():
 @app.get('/health')
 async def health():
     return {'status': 'ok', 'model': MODEL}
+
+
+if os.environ.get('CORTEX_DEV') == '1':
+    agent_tool_names = {
+        getattr(tool, '__name__', getattr(tool, 'name', None))
+        for tool in root_agent.tools
+    }
+
+    @app.post('/dev/tool/{name}')
+    async def dev_tool(name: str, args: dict):
+        if name not in agent_tool_names:
+            raise HTTPException(status_code=404, detail='Unknown tool')
+        tool_function = getattr(cortex_tools, name)
+        result = tool_function(**args)
+        return {'name': name, 'args': args, 'response': result}
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +203,14 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
                             )
                         )
 
+                elif msg_type == 'audio_stream_end':
+                    if _audio_buf:
+                        live_request_queue.send_realtime(
+                            types.Blob(data=bytes(_audio_buf), mime_type=AUDIO_MIME)
+                        )
+                        _audio_buf.clear()
+                    live_request_queue.send_audio_stream_end()
+
     async def downstream_task():
         """
         Reads events from Vertex AI and forwards them to the browser as JSON.
@@ -196,16 +220,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
 
         by_alias=True outputs camelCase field names (e.g. turnComplete, inlineData)
         consistent with the ADK Dev UI frontend convention.
-
-        AI interaction transparency: accumulates input/output transcriptions per
-        turn and auto-logs them to _SESSION_LOG on turnComplete.
         """
-        # Per-turn transcription state for AI interaction logging.
-        # Transcription events are cumulative (each contains the full text
-        # so far), so we keep only the latest value — not a list of chunks.
-        _surgeon_said = ''
-        _orion_said = ''
-
         async with aclosing(runner.run_live(
             session=session,
             live_request_queue=live_request_queue,
@@ -216,35 +231,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, session_id: str
                 event_json = event.model_dump_json(exclude_none=True, by_alias=True)
                 await websocket.send_text(event_json)
 
-                # Parse the event once for transcription tracking
-                event_dict = json.loads(event_json)
-
-                # Latest surgeon speech (inputTranscription is cumulative)
-                input_text = (
-                    event_dict.get('inputTranscription', {}).get('text')
-                    or event_dict.get('input_transcription', {}).get('text')
-                )
-                if input_text:
-                    _surgeon_said = input_text
-
-                # Latest ORION response (outputTranscription is cumulative)
-                output_text = (
-                    event_dict.get('outputTranscription', {}).get('text')
-                    or event_dict.get('output_transcription', {}).get('text')
-                )
-                if output_text:
-                    _orion_said = output_text
-
-                # On turnComplete, log the exchange and send to browser
-                if event_dict.get('turnComplete') or event_dict.get('turn_complete'):
-                    entry = log_ai_interaction(_surgeon_said, _orion_said)
-                    if entry:
-                        await websocket.send_text(json.dumps({
-                            'type': 'ai_log',
-                            'entry': entry,
-                        }))
-                    _surgeon_said = ''
-                    _orion_said = ''
           except (ValueError, KeyError, TypeError) as exc:
             # Tool-not-found errors (e.g. model calls agent name as a tool)
             # or malformed function calls. Notify browser, then re-raise so
