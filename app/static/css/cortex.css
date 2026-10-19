@@ -51,8 +51,7 @@ body {
   overflow: hidden;
   min-width: 1200px;
 }
-button, input { font: inherit; }
-button, input { color: inherit; }
+button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--voice); outline-offset: 2px; border-radius: 6px; }
 h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-2); letter-spacing: 0; }
@@ -145,7 +144,7 @@ h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-2); letter-
 .voice-state { display: flex; align-items: baseline; gap: 10px; min-height: 26px; }
 .voice-state b { font-size: 20px; font-weight: 700; }
 .voice-state span { font-size: 13px; color: var(--text-3); }
-.voice-state .link { margin-left: auto; border: 0; background: none; padding: 0; font-size: 13px; color: var(--text-3); text-decoration: underline; text-underline-offset: 3px; }
+.voice-state .link { margin-left: auto; border: 0; background: none; padding: 3px 0; font-size: 13px; color: var(--text-3); text-decoration: underline; text-underline-offset: 3px; }
 .voice-state .link:hover { color: var(--text); }
 
 .convo { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }

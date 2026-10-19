@@ -9,9 +9,9 @@ const _overlayEscape = (value) => String(value ?? '')
   .replace(/"/g, '&quot;');
 
 const _overlayIcons = {
-  x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
-  warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.4v.1" stroke-linecap="round"/></svg>',
-  ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>',
+  x: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  warn: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.4v.1" stroke-linecap="round"/></svg>',
+  ok: '<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>',
 };
 
 const _overlayCloseButton = (label) => `<button class="x" type="button" aria-label="${_overlayEscape(label)}">${_overlayIcons.x}</button>`;
@@ -39,7 +39,9 @@ const Drawer = (() => {
   }
 
   function _syncOpen() {
-    root.classList.toggle('open', inner.children.length > 0);
+    const isOpen = inner.children.length > 0;
+    root.classList.toggle('open', isOpen);
+    inner.tabIndex = isOpen ? 0 : -1;
   }
 
   function _card(kind, title, subtitle, bodyHtml) {
@@ -231,13 +233,16 @@ const Modal = (() => {
     root.addEventListener('click', (event) => {
       if (event.target.classList.contains('modal-backdrop')) hide();
     });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && root.firstElementChild) hide();
+    });
   }
 
   function show(title, content, bullets) {
     const checklist = String(title).includes('Checklist');
     const rows = (bullets || []).map((bullet, index) => `<li style="animation-delay:${60 + 40 * index}ms">${_overlayEscape(bullet)}</li>`).join('');
     root.innerHTML = `<div class="modal-backdrop">
-      <article class="modal" role="dialog" aria-label="${_overlayEscape(title)}">
+      <article class="modal" role="dialog" aria-modal="true" aria-label="${_overlayEscape(title)}">
         ${_overlayCloseButton('Close summary')}
         <h3>${_overlayEscape(title)}</h3>
         ${content ? `<p class="lead">${_overlayEscape(content)}</p>` : ''}

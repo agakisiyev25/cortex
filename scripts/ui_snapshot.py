@@ -12,6 +12,15 @@ from playwright.async_api import Page, async_playwright
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "ui_snapshots"
 BASE_URL = "http://localhost:8080/?demo=1"
+REFERENCE_URL = (ROOT / "design" / "cortex-reference.html").resolve().as_uri()
+REFERENCE_STATES = {
+    "01_initial": "initial",
+    "02_patient": "patient",
+    "03_drug": "drug",
+    "04_timeout": "timeout",
+    "05_3d": "model",
+    "06_only3d": "only3d",
+}
 
 
 async def _wait(page: Page) -> None:
@@ -85,13 +94,35 @@ async def capture(width: int, height: int, browser) -> None:
         raise RuntimeError(f"Browser errors at {width}x{height}:\n{details}")
 
 
+async def capture_reference(width: int, height: int, browser) -> None:
+    page = await browser.new_page(viewport={"width": width, "height": height})
+    for stem, state in REFERENCE_STATES.items():
+        await page.goto(
+            f"{REFERENCE_URL}?shot&state={state}",
+            wait_until="networkidle",
+        )
+        await _wait(page)
+        await page.screenshot(
+            path=OUTPUT_DIR / f"ref_{stem}_{width}.png",
+            full_page=False,
+        )
+    await page.close()
+
+
 async def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch()
+        browser = await playwright.chromium.launch(
+            args=[
+                "--use-gl=angle",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+            ]
+        )
         try:
             for width, height in ((1920, 1080), (1366, 768)):
                 await capture(width, height, browser)
+                await capture_reference(width, height, browser)
         finally:
             await browser.close()
 
