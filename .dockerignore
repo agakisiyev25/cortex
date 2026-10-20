@@ -1,0 +1,6 @@
+# Only requirements.txt and app/ are needed in the image.
+*
+!requirements.txt
+!app/
+app/**/__pycache__/
+app/**/*.pyc

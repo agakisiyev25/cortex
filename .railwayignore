@@ -1,0 +1,11 @@
+# Upload only what the Dockerfile needs (requirements.txt, app/) plus deploy config.
+.git/
+.env
+.venv/
+data/
+glioma mri/
+ui_snapshots/
+design/
+scripts/
+tests/
+*.md

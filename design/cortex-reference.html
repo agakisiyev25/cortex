@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CorteX Console Reference</title>
+<!--
+  CorteX console: visual reference for the v4 redesign.
+  Static mock. The MRI image, 3D model, volumes and checklist items are placeholders.
+  The real app keeps its own data and JS logic and copies the look from this file.
+-->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/atkinson-hyperlegible-next@5.3.0/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/atkinson-hyperlegible-mono@5.3.0/index.css">
+<style>
+/* ===== Tokens ===== */
+:root {
+  --well: #000000;          /* image wells: MRI, 3D, voice trace */
+  --drape: #0D1716;         /* page chrome, surgical-drape green */
+  --raised: #14211F;        /* controls on the drape */
+  --line: #22322F;          /* hairlines */
+  --glass: rgba(15, 26, 25, 0.86);
+  --glass-line: rgba(255, 255, 255, 0.08);
+
+  --text: #E6EEEC;
+  --text-2: #9DB0AC;
+  --text-3: #788C89;
+
+  --voice: #3FD8C2;         /* CorteX's own channel colour */
+  --voice-soft: rgba(63, 216, 194, 0.14);
+  --alarm: #FF5A57;
+  --alarm-soft: rgba(255, 90, 87, 0.14);
+  --warn: #FFB648;
+  --warn-soft: rgba(255, 182, 72, 0.14);
+  --ok: #4BDB8A;
+  --ok-soft: rgba(75, 219, 138, 0.14);
+
+  --font: "Atkinson Hyperlegible Next Variable", system-ui, sans-serif;
+  --mono: "Atkinson Hyperlegible Mono Variable", ui-monospace, monospace;
+
+  --r-well: 14px;
+  --r-sheet: 14px;
+  --r-ctl: 10px;
+  --gap: 10px;
+  --rail: 360px;
+  --drawer: 400px;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --t-fast: 160ms;
+  --t-med: 260ms;
+  --t-slow: 420ms;
+}
+@media (max-width: 1499px) {
+  :root { --rail: 320px; --drawer: 340px; }
+}
+
+/* ===== Base ===== */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--drape);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  min-width: 1200px;
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--voice); outline-offset: 2px; border-radius: 6px; }
+h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-2); letter-spacing: 0; }
+
+/* ===== App grid ===== */
+#app {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 56px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) var(--rail);
+  column-gap: var(--gap);
+  padding: 0 var(--gap) var(--gap);
+}
+body.ref #app { height: calc(100vh - 40px); }
+
+/* ===== Top bar ===== */
+#topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 6px;
+  min-width: 0;
+}
+.brand { font-size: 21px; font-weight: 800; letter-spacing: -0.01em; }
+.case { display: flex; align-items: center; gap: 14px; min-width: 0; padding-left: 18px; border-left: 1px solid var(--line); height: 24px; }
+.case-id { font-family: var(--mono); font-size: 13px; color: var(--text-3); }
+.case-proc { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 10px; border-radius: 999px;
+  font-size: 13px; font-weight: 700; white-space: nowrap;
+}
+.chip-alarm { background: var(--alarm-soft); color: var(--alarm); box-shadow: inset 0 0 0 1px rgba(255, 90, 87, 0.35); }
+.chip-voice { background: var(--voice-soft); color: var(--voice); height: 22px; font-size: 12px; }
+.session { margin-left: auto; display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+.status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--text-2); }
+.status i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.status[data-state="connecting"] { color: var(--warn); } .status[data-state="connecting"] i { background: var(--warn); }
+.status[data-state="live"] { color: var(--ok); }
+.status[data-state="live"] i { background: var(--ok); box-shadow: 0 0 0 0 rgba(75, 219, 138, 0.6); animation: live 2s var(--ease) infinite; }
+.status[data-state="demo"] { color: var(--voice); } .status[data-state="demo"] i { background: var(--voice); }
+@keyframes live { 0% { box-shadow: 0 0 0 0 rgba(75, 219, 138, 0.55); } 70%, 100% { box-shadow: 0 0 0 7px rgba(75, 219, 138, 0); } }
+.timer { font-family: var(--mono); font-size: 15px; color: var(--text); }
+.disclaimer { font-size: 12px; color: var(--text-3); padding-left: 14px; border-left: 1px solid var(--line); }
+
+/* ===== Stage ===== */
+#viewers {
+  position: relative;
+  display: flex;
+  gap: var(--gap);
+  min-width: 0;
+  min-height: 0;
+}
+.well {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--well);
+  border-radius: var(--r-well);
+  overflow: hidden;
+}
+#viewers.mri-hidden #mri-panel,
+#viewers.ar-hidden #ar-panel { display: none; }
+.well canvas.fill, .well .fill { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.well-3d { background: radial-gradient(ellipse 70% 60% at 50% 45%, #0F2220 0%, #050A0A 55%, #000 100%); }
+
+.well-head {
+  position: absolute; inset: 0 0 auto 0;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 14px 16px 28px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+.well-title { font-size: 15px; font-weight: 700; }
+.well-title span { font-weight: 400; color: var(--text-2); margin-left: 8px; }
+.well-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.slice { font-family: var(--mono); font-size: 15px; }
+.slice small { color: var(--text-3); font-size: 13px; }
+.view { font-size: 15px; color: var(--text-2); }
+
+.slice-track { position: absolute; right: 10px; top: 64px; bottom: 56px; width: 3px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); }
+.slice-track i { position: absolute; left: -1px; width: 5px; height: 18px; margin-top: -9px; border-radius: 3px; background: var(--voice); transition: top var(--t-fast) var(--ease); }
+
+.well-foot {
+  position: absolute; inset: auto 0 0 0;
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  padding: 28px 16px 14px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+  font-size: 13px; color: var(--text-2);
+  pointer-events: none;
+}
+.legend span { display: inline-flex; align-items: center; gap: 8px; transition: opacity var(--t-fast); }
+.legend span::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+.legend span.off { opacity: 0.4; text-decoration: line-through; }
+
+/* ===== Drawer (docked column, pushes the wells) ===== */
+#drawer {
+  flex: 0 0 auto;
+  width: 0;
+  margin-left: calc(-1 * var(--gap));
+  overflow: hidden;
+  transition: width var(--t-med) var(--ease), margin var(--t-med) var(--ease);
+}
+#drawer.open { width: var(--drawer); margin-left: 0; }
+.drawer-inner {
+  width: var(--drawer);
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--raised);
+  border-radius: var(--r-sheet);
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.card { padding: 16px 20px 18px; animation: card-in var(--t-med) var(--ease); }
+.card + .card { border-top: 1px solid var(--line); }
+@keyframes card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.card-title { font-size: 17px; font-weight: 700; }
+.card-title small { display: block; font-size: 13px; font-weight: 400; color: var(--text-2); margin-top: 2px; }
+.x {
+  width: 30px; height: 30px; display: grid; place-items: center;
+  border: 0; border-radius: 8px; background: transparent; color: var(--text-3);
+}
+.x:hover { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.x svg { width: 14px; height: 14px; }
+
+/* Patient: lab values as monitor-style readouts */
+.readouts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.readouts.three { grid-template-columns: 1.5fr 1fr 1fr; }
+.readout label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.readout b { display: block; font-size: 28px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+.readout em { display: block; font-style: normal; font-size: 12px; color: var(--text-3); margin-top: 1px; }
+.readout.flag b { color: var(--warn); }
+.readout p { margin: 2px 0 0; font-size: 12px; color: var(--warn); }
+.facts { display: grid; gap: 10px; }
+.fact label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 2px; }
+.fact div { font-size: 15px; font-weight: 600; }
+.fact p { margin: 2px 0 0; font-size: 13px; color: var(--text-3); }
+.fact p.flag { color: var(--warn); }
+.fact.allergy div { color: var(--alarm); font-weight: 700; }
+.single b { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; }
+.single em { font-style: normal; font-size: 17px; color: var(--text-2); margin-left: 6px; }
+
+/* Volumes */
+.vbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; gap: 2px; margin-bottom: 16px; }
+.vbar i { background: var(--c); }
+.vrows { display: grid; gap: 10px; }
+.vrow { display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 10px; font-size: 15px; }
+.vrow::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--c); }
+.vrow b { font-weight: 600; }
+.vrow b small { font-weight: 400; color: var(--text-3); margin-left: 4px; font-size: 13px; }
+.vrow.total { border-top: 1px solid var(--line); padding-top: 10px; font-weight: 700; }
+.vrow.total::before { background: transparent; }
+.note { margin: 12px 0 0; font-size: 12px; color: var(--text-3); }
+
+/* Checklist */
+.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.checks li { display: flex; gap: 12px; align-items: flex-start; font-size: 15px; }
+.checks li::before { content: ""; flex: none; width: 18px; height: 18px; margin-top: 1px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.callout { display: flex; gap: 10px; margin-top: 14px; padding: 10px 12px; border-radius: var(--r-ctl); background: var(--warn-soft); color: var(--warn); font-size: 13px; font-weight: 600; }
+.callout svg { flex: none; width: 16px; height: 16px; margin-top: 1px; }
+
+/* Operative log timeline */
+.timeline { list-style: none; margin: 0; padding: 0; position: relative; }
+.timeline li { display: grid; grid-template-columns: 46px 14px 1fr; gap: 0 8px; padding-bottom: 12px; position: relative; }
+.timeline time { font-family: var(--mono); font-size: 13px; color: var(--text-3); padding-top: 1px; }
+.timeline li::before { content: ""; grid-column: 2; width: 9px; height: 9px; margin: 5px 0 0 2px; border-radius: 50%; background: var(--ok); }
+.timeline li:not(:last-child)::after { content: ""; position: absolute; left: 59px; top: 17px; bottom: 0; width: 1px; background: var(--line); }
+.timeline .ev { grid-column: 3; }
+.timeline .ev b { display: block; font-size: 15px; }
+.timeline .ev span { font-size: 13px; color: var(--text-2); }
+.timeline li.bad::before { background: var(--alarm); }
+.timeline li.bad .ev b { color: var(--alarm); }
+
+/* ===== Drug banner (monitor alarm style) ===== */
+.banner {
+  position: absolute; top: 64px; left: 14px; z-index: 5;
+  width: min(460px, calc(50% - 28px));
+  border-radius: 12px;
+  background: var(--glass);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  animation: banner-in var(--t-med) var(--ease);
+}
+#viewers.mri-hidden .banner { width: min(460px, calc(100% - 28px)); }
+@keyframes banner-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: none; } }
+.banner-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.banner-head svg { width: 20px; height: 20px; flex: none; }
+.banner-head b { font-size: 17px; font-weight: 700; }
+.badge { margin-left: auto; height: 24px; padding: 0 10px; border-radius: 6px; display: inline-flex; align-items: center; font-size: 13px; font-weight: 800; color: #0B0B0B; }
+.banner p { margin: 0; padding: 0 14px 14px 44px; font-size: 15px; color: var(--text); }
+.banner .countdown { height: 3px; transform-origin: left; animation: countdown 15s linear forwards; }
+@keyframes countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+.banner.caution { box-shadow: inset 0 0 0 1px rgba(255, 90, 87, 0.55), 0 18px 48px rgba(0, 0, 0, 0.5); }
+.banner.caution .banner-head { background: var(--alarm-soft); color: var(--alarm); }
+.banner.caution .badge, .banner.caution .countdown { background: var(--alarm); }
+.banner.safe { box-shadow: inset 0 0 0 1px rgba(75, 219, 138, 0.5), 0 18px 48px rgba(0, 0, 0, 0.5); }
+.banner.safe .banner-head { background: var(--ok-soft); color: var(--ok); }
+.banner.safe .badge, .banner.safe .countdown { background: var(--ok); }
+
+/* ===== Summary modal ===== */
+.modal-backdrop {
+  position: absolute; inset: 0; z-index: 10;
+  display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  border-radius: var(--r-well);
+  animation: fade var(--t-med) var(--ease);
+}
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.modal {
+  position: relative;
+  width: min(760px, 88%); max-height: 86%; overflow-y: auto;
+  padding: 30px 34px 32px;
+  background: var(--raised);
+  border-radius: 16px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6), inset 0 0 0 1px var(--glass-line);
+  animation: sheet-in var(--t-slow) var(--ease);
+}
+@keyframes sheet-in { from { opacity: 0; transform: translateY(14px) scale(0.985); } to { opacity: 1; transform: none; } }
+.modal .x { position: absolute; top: 16px; right: 16px; }
+.modal h3 { margin: 0 40px 8px 0; font-size: 28px; font-weight: 800; letter-spacing: -0.015em; line-height: 1.15; }
+.modal .lead { margin: 0 0 20px; font-size: 17px; color: var(--text-2); max-width: 62ch; }
+.mlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; counter-reset: n; }
+.mlist li { display: flex; gap: 14px; align-items: flex-start; padding: 10px 0; font-size: 17px; border-top: 1px solid var(--line); opacity: 0; animation: row-in var(--t-med) var(--ease) forwards; }
+.mlist li:first-child { border-top: 0; }
+@keyframes row-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.mlist.checked li::before { content: ""; flex: none; width: 22px; height: 22px; border-radius: 50%; background: var(--ok-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234BDB8A' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 12.5l4 4 8-9'/%3E%3C/svg%3E") center / 14px no-repeat; }
+.mlist.numbered li::before { counter-increment: n; content: counter(n); flex: none; width: 22px; font-family: var(--mono); font-size: 15px; color: var(--text-3); text-align: right; padding-top: 1px; }
+
+/* ===== Rail ===== */
+#rail { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.voice { display: grid; gap: 10px; }
+.voice-top { display: flex; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; padding: 3px; border-radius: 9px; background: var(--raised); }
+.seg button { height: 26px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.seg button[aria-pressed="true"] { background: var(--line); color: var(--text); }
+.trace-well {
+  position: relative; display: block; width: 100%; height: 96px; padding: 0;
+  border: 0; border-radius: 12px; background: var(--well); overflow: hidden;
+  touch-action: none; user-select: none;
+  transition: box-shadow var(--t-fast) var(--ease);
+}
+.trace-well canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.trace-well[data-state="talking"] { box-shadow: inset 0 0 0 1.5px var(--voice), 0 0 24px rgba(63, 216, 194, 0.18); }
+.trace-well .channel { position: absolute; top: 8px; left: 10px; font-size: 12px; font-weight: 700; color: var(--voice); pointer-events: none; }
+.trace-well[data-state="offline"] .channel { color: var(--text-3); }
+.trace-well[data-state="connecting"] .channel { color: var(--warn); }
+.voice-state { display: flex; align-items: baseline; gap: 10px; min-height: 26px; }
+.voice-state b { font-size: 20px; font-weight: 700; }
+.voice-state span { font-size: 13px; color: var(--text-3); }
+.voice-state .link { margin-left: auto; border: 0; background: none; padding: 0; font-size: 13px; color: var(--text-3); text-decoration: underline; text-underline-offset: 3px; }
+.voice-state .link:hover { color: var(--text); }
+
+.convo { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.turns { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.turn { animation: card-in var(--t-fast) var(--ease); }
+.turn .who { display: block; font-size: 12px; font-weight: 700; margin-bottom: 2px; color: var(--text-3); }
+.turn p { margin: 0; font-size: 15px; line-height: 1.45; color: var(--text-2); max-width: 60ch; }
+.turn.cortex .who { color: var(--voice); }
+.turn.cortex p { color: var(--text); }
+.turn.streaming p::after { content: ""; display: inline-block; width: 6px; height: 14px; margin-left: 3px; vertical-align: -2px; background: var(--voice); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.empty { margin: 0; font-size: 15px; color: var(--text-3); }
+
+.activity { flex: 0 0 176px; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.activity ol { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0;
+  -webkit-mask-image: linear-gradient(to bottom, #000 75%, transparent); mask-image: linear-gradient(to bottom, #000 75%, transparent); }
+.activity li { display: grid; grid-template-columns: 44px 1fr; gap: 8px; padding: 4px 6px; margin: 0 -6px; border-radius: 6px; font-size: 13px; color: var(--text-2); }
+.activity li time { font-family: var(--mono); color: var(--text-3); }
+.activity li.fresh { animation: fresh 1.6s var(--ease); }
+.activity li.alarm { color: var(--alarm); }
+.activity li.empty-row { display: block; color: var(--text-3); }
+@keyframes fresh { from { background: var(--voice-soft); color: var(--text); } to { background: transparent; } }
+
+.command { position: relative; flex: none; }
+.command input {
+  width: 100%; height: 44px; padding: 0 48px 0 16px;
+  border: 0; border-radius: 999px; background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 15px; outline: none;
+  transition: box-shadow var(--t-fast);
+}
+.command input::placeholder { color: var(--text-3); }
+.command input:focus { box-shadow: inset 0 0 0 1.5px var(--voice); }
+.command button {
+  position: absolute; right: 6px; top: 6px; width: 32px; height: 32px;
+  border: 0; border-radius: 50%; display: grid; place-items: center;
+  background: var(--voice); color: #04110F;
+}
+.command button svg { width: 16px; height: 16px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+}
+
+/* ===== Reference-only state switcher (not part of the product) ===== */
+.ref-bar { display: none; }
+body.ref .ref-bar {
+  display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 16px;
+  background: #050909; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--text-3);
+}
+.ref-bar button { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: var(--raised); color: var(--text-2); font-size: 12px; }
+.ref-bar button.on { background: var(--voice); color: #04110F; font-weight: 700; }
+.ref-bar .sep { width: 1px; height: 18px; background: var(--line); margin: 0 6px; }
+</style>
+</head>
+<body class="ref">
+
+<div class="ref-bar" aria-label="Reference states">
+  <span>Reference only:</span>
+  <button data-s="initial">Initial</button>
+  <button data-s="patient">Patient briefing</button>
+  <button data-s="drug">Drug check</button>
+  <button data-s="timeout">Time-out</button>
+  <button data-s="model">3D rotated</button>
+  <button data-s="only3d">3D only</button>
+  <span class="sep"></span>
+  <span>Voice:</span>
+  <button data-v="offline">Offline</button>
+  <button data-v="idle">Idle</button>
+  <button data-v="talking">Listening</button>
+  <button data-v="thinking">Thinking</button>
+  <button data-v="speaking">Speaking</button>
+</div>
+
+<div id="app">
+  <header id="topbar">
+    <div class="brand">CorteX</div>
+    <div class="case">
+      <span class="case-id">PT-0006-T6</span>
+      <span class="case-proc">Right craniotomy for tumor resection</span>
+      <span class="chip chip-alarm">Allergies: Cefazolin, Latex</span>
+    </div>
+    <div class="session">
+      <span class="status" id="status" data-state="live"><i></i><b>Live</b></span>
+      <span class="timer">04:12</span>
+      <span class="disclaimer">Research prototype, not for clinical use</span>
+    </div>
+  </header>
+
+  <main id="viewers">
+    <section id="mri-panel" class="well" aria-label="MRI">
+      <canvas id="mri-canvas" class="fill"></canvas>
+      <div class="well-head">
+        <div class="well-title">Axial MRI<span>T1 with contrast</span></div>
+        <div class="well-meta">
+          <span class="slice">84 <small>/ 155</small></span>
+          <span class="chip chip-voice">Tumor</span>
+        </div>
+      </div>
+      <div class="slice-track"><i style="top: 45.8%"></i></div>
+      <div class="well-foot legend">
+        <span style="--c:#E0332B">Enhancing tumor</span>
+        <span style="--c:#F2C200">Necrotic core</span>
+        <span style="--c:#2FA84F">Edema</span>
+      </div>
+    </section>
+
+    <section id="ar-panel" class="well well-3d" aria-label="3D model">
+      <div id="three" class="fill"></div>
+      <div class="well-head">
+        <div class="well-title">Patient model<span>3D</span></div>
+        <div class="well-meta"><span class="view" id="view-name">Default view</span></div>
+      </div>
+      <div class="well-foot legend" id="legend-3d">
+        <span style="--c:#C9D2DA">Brain</span>
+        <span style="--c:#E0332B">Enhancing tumor</span>
+        <span style="--c:#F2C200">Necrotic core</span>
+        <span style="--c:#2FA84F" data-k="edema">Edema</span>
+      </div>
+    </section>
+
+    <aside id="drawer" aria-label="Details">
+      <div class="drawer-inner" id="drawer-inner"></div>
+    </aside>
+
+    <div id="banner-slot"></div>
+    <div id="modal-slot"></div>
+  </main>
+
+  <aside id="rail">
+    <section class="voice">
+      <div class="voice-top">
+        <h2>Voice</h2>
+        <div class="seg" role="group" aria-label="Talk mode">
+          <button aria-pressed="true">Push-to-talk</button>
+          <button aria-pressed="false">Hands-free</button>
+        </div>
+      </div>
+      <button class="trace-well" id="voice-trace" data-state="idle" aria-label="Hold to talk to CorteX">
+        <canvas id="trace"></canvas>
+        <span class="channel">CorteX</span>
+      </button>
+      <div class="voice-state">
+        <b id="vs-main">Hold Space to talk</b>
+        <span id="vs-sub">or hold the trace</span>
+        <button class="link" id="vs-disc">Disconnect</button>
+      </div>
+    </section>
+
+    <section class="convo">
+      <h2>Conversation</h2>
+      <div class="turns" id="turns"></div>
+    </section>
+
+    <section class="activity">
+      <h2>Actions</h2>
+      <ol id="actions"></ol>
+    </section>
+
+    <form class="command" onsubmit="return false">
+      <input type="text" placeholder="Type a command" aria-label="Type a command">
+      <button type="submit" aria-label="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+      </button>
+    </form>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+/* ---------- Icons ---------- */
+const ICON = {
+  x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 3.5l9.5 16.5h-19z"/><path d="M12 10v4.5M12 17.4v.1" stroke-linecap="round"/></svg>',
+  ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>',
+};
+const closeBtn = '<button class="x" aria-label="Close">' + ICON.x + '</button>';
+
+/* ---------- Placeholder data ---------- */
+const CARDS = {
+  patient: `
+    <div class="card">
+      <div class="card-head"><div class="card-title">Patient<small>46-year-old male, 78 kg</small></div>${closeBtn}</div>
+      <div class="readouts">
+        <div class="readout"><label>Hemoglobin</label><b>13.4</b><em>g/dL</em></div>
+        <div class="readout"><label>Platelets</label><b>245</b><em>K/µL</em></div>
+        <div class="readout"><label>INR</label><b>1.0</b></div>
+        <div class="readout"><label>Creatinine</label><b>0.8</b><em>mg/dL</em></div>
+      </div>
+      <div class="readouts three">
+        <div class="readout"><label>Blood pressure</label><b>124/78</b><em>mmHg</em></div>
+        <div class="readout"><label>Weight</label><b>78</b><em>kg</em></div>
+        <div class="readout"><label>Age</label><b>46</b><em>years</em></div>
+      </div>
+      <div class="facts">
+        <div class="fact"><label>Diagnosis</label><div>Recurrent glioblastoma, right hemisphere</div></div>
+        <div class="fact"><label>Procedure</label><div>Right craniotomy for tumor resection</div></div>
+        <div class="fact allergy"><label>Allergies</label><div>Cefazolin (hives), Latex</div><p class="flag">Latex-free room required</p></div>
+        <div class="fact"><label>Medications</label><div>Dexamethasone 4 mg BID, Levetiracetam 500 mg BID</div></div>
+      </div>
+    </div>`,
+  volumes: `
+    <div class="card">
+      <div class="card-head"><div class="card-title">Tumor volumes</div>${closeBtn}</div>
+      <div class="vbar"><i style="--c:#E0332B;flex:8.4"></i><i style="--c:#F2C200;flex:3.1"></i><i style="--c:#2FA84F;flex:21.7"></i></div>
+      <div class="vrows">
+        <div class="vrow" style="--c:#E0332B"><span>Enhancing tumor</span><b>8.4<small>cm³</small></b></div>
+        <div class="vrow" style="--c:#F2C200"><span>Necrotic core</span><b>3.1<small>cm³</small></b></div>
+        <div class="vrow" style="--c:#2FA84F"><span>Edema</span><b>21.7<small>cm³</small></b></div>
+        <div class="vrow total"><span>Total tumor</span><b>33.2<small>cm³</small></b></div>
+      </div>
+      <p class="note">Reference segmentation (MU-Glioma-Post)</p>
+    </div>`,
+  checklist: `
+    <div class="card">
+      <div class="card-head"><div class="card-title">Positioning<small>Surgical phase checklist</small></div>${closeBtn}</div>
+      <ul class="checks">
+        <li>Head fixed in pin holder</li>
+        <li>Pressure points padded</li>
+        <li>Neuronavigation registered</li>
+        <li>Antibiotic prophylaxis given</li>
+      </ul>
+      <div class="callout">${ICON.warn}<span>Cefazolin allergy: use vancomycin for prophylaxis.</span></div>
+    </div>`,
+  log: `
+    <div class="card">
+      <div class="card-head"><div class="card-title">Operative log</div>${closeBtn}</div>
+      <ol class="timeline">
+        <li><time>09:42</time><div class="ev"><b>Time-out complete</b><span>WHO time-out verified</span></div></li>
+      </ol>
+    </div>`,
+};
+
+const STATES = {
+  initial: { cards: [], banner: null, modal: null, turns: [], actions: [] },
+  patient: {
+    cards: ['patient', 'volumes', 'checklist'],
+    turns: [['surgeon', 'Brief me on this patient.'], ['cortex', 'Forty-six-year-old male, recurrent glioblastoma in the right hemisphere, for right craniotomy. Allergic to cefazolin and latex. On dexamethasone and levetiracetam. Enhancing tumor 8.4 cubic centimetres. Ready when you are.']],
+    actions: [['09:40', 'Patient record opened'], ['09:40', 'Tumor volumes measured'], ['09:40', 'Checklist: Positioning']],
+  },
+  drug: {
+    cards: ['patient', 'volumes', 'checklist'], banner: 'caution',
+    turns: [['surgeon', 'Brief me on this patient.'], ['cortex', 'Forty-six-year-old male, recurrent glioblastoma in the right hemisphere, for right craniotomy. Ready when you are.'], ['surgeon', 'CorteX, can we give cefazolin?'], ['cortex', 'Caution. Documented allergy to cefazolin. Vancomycin is the suggested alternative.']],
+    actions: [['09:41', 'Drug check: cefazolin', 'alarm'], ['09:40', 'Patient record opened'], ['09:40', 'Tumor volumes measured'], ['09:40', 'Checklist: Positioning']],
+  },
+  timeout: {
+    cards: ['log'], modal: 'timeout',
+    turns: [['surgeon', 'CorteX, run the time-out.'], ['cortex', 'Patient confirmed. Right craniotomy. Allergies cefazolin and latex. Imaging displayed. Time-out complete.']],
+    actions: [['09:42', 'WHO Surgical Safety Checklist'], ['09:42', 'Logged: Time-out complete'], ['09:42', 'Display cleared']],
+  },
+  model: {
+    cards: [], view: 'Top', rot: [90, 0], edemaOff: true,
+    turns: [['surgeon', 'CorteX, show me the top and hide the edema.'], ['cortex', 'Top view. Edema hidden.']],
+    actions: [['09:44', '3D: Edema hidden'], ['09:44', '3D → Top'], ['09:44', 'Display cleared']],
+  },
+  only3d: {
+    cards: [], only3d: true, view: 'Top', rot: [90, 0], edemaOff: true,
+    turns: [['surgeon', 'CorteX, three-D only.'], ['cortex', 'Showing the 3D model only.']],
+    actions: [['09:45', '3D only'], ['09:44', '3D: Edema hidden'], ['09:44', '3D → Top']],
+  },
+};
+
+const BANNERS = {
+  caution: `<div class="banner caution" role="alert">
+      <div class="banner-head">${ICON.warn}<b>Cefazolin</b><span class="badge">Caution</span></div>
+      <p>Documented allergy to this drug (hives). Suggested alternative: vancomycin.</p>
+      <div class="countdown"></div></div>`,
+};
+const MODALS = {
+  timeout: `<div class="modal-backdrop"><div class="modal" role="dialog" aria-label="Summary">${closeBtn}
+      <h3>WHO Surgical Safety Checklist</h3>
+      <ul class="mlist checked">
+        <li style="animation-delay:60ms">Patient: 46-year-old male</li>
+        <li style="animation-delay:100ms">Procedure: Right craniotomy for tumor resection</li>
+        <li style="animation-delay:140ms">Allergies: Cefazolin (hives), Latex</li>
+        <li style="animation-delay:180ms">Essential imaging displayed</li>
+      </ul></div></div>`,
+};
+
+/* ---------- State rendering ---------- */
+const $ = (s) => document.querySelector(s);
+function setState(name) {
+  const s = STATES[name];
+  document.querySelectorAll('.ref-bar [data-s]').forEach(b => b.classList.toggle('on', b.dataset.s === name));
+  $('#drawer-inner').innerHTML = (s.cards || []).map(k => CARDS[k]).join('');
+  $('#drawer').classList.toggle('open', (s.cards || []).length > 0);
+  $('#banner-slot').innerHTML = s.banner ? BANNERS[s.banner] : '';
+  $('#modal-slot').innerHTML = s.modal ? MODALS[s.modal] : '';
+  $('#viewers').classList.toggle('mri-hidden', !!s.only3d);
+  const turns = s.turns || [];
+  $('#turns').innerHTML = turns.length
+    ? turns.map(([who, t]) => `<div class="turn ${who}"><span class="who">${who === 'cortex' ? 'CorteX' : 'Surgeon'}</span><p>${t}</p></div>`).join('')
+    : '<p class="empty">Say “CorteX, brief me on this patient” to start.</p>';
+  const acts = s.actions || [];
+  $('#actions').innerHTML = acts.length
+    ? acts.map(([t, x, cls], i) => `<li class="${i === 0 ? 'fresh ' : ''}${cls || ''}"><time>${t}</time><span>${x}</span></li>`).join('')
+    : '<li class="empty-row">Actions CorteX takes appear here.</li>';
+  $('#view-name').textContent = (s.view || 'Default') + (s.view && s.view !== 'Default' ? '' : ' view');
+  document.querySelector('#legend-3d [data-k="edema"]').classList.toggle('off', !!s.edemaOff);
+  if (window.model3d) window.model3d.apply(s);
+}
+
+/* ---------- Placeholder MRI (procedural, for the mock only) ---------- */
+function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function fbm(x, y) { let s = 0, a = 0.5, f = 1; for (let i = 0; i < 5; i++) { s += a * vnoise(x * f, y * f); f *= 2; a *= 0.5; } return s; }
+function buildSlice() {
+  const W = 440, H = 520, off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const ctx = off.getContext('2d'), img = ctx.createImageData(W, H), d = img.data;
+  const cx = W / 2, cy = H / 2 + 4, rx = W * 0.43, ry = H * 0.45;
+  const tx = W * 0.31, ty = H * 0.36;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4;
+    const nx = (x - cx) / rx, ny = (y - cy) / ry;
+    const wob = 0.03 * (fbm(x * 0.02, y * 0.02) - 0.5);
+    const r = Math.sqrt(nx * nx + ny * ny) + wob;
+    let g = 0;
+    if (r < 1) {
+      const n = fbm(x * 0.045, y * 0.045);
+      const sulci = Math.abs(Math.sin(fbm(x * 0.018 + 3, y * 0.018) * 22));
+      const rim = r > 0.78 ? 1 : 0;
+      g = 0.58 + 0.12 * (n - 0.5);
+      if (r > 0.72) g = 0.47 + 0.1 * (n - 0.5);
+      if ((rim || r > 0.6) && sulci < 0.16) g *= 0.35;
+      // ventricles
+      const v1 = ((x - (cx - 22)) / 15) ** 2 + ((y - (cy - 6)) / 62) ** 2;
+      const v2 = ((x - (cx + 22)) / 15) ** 2 + ((y - (cy - 6)) / 62) ** 2;
+      if (v1 < 1 || v2 < 1) g = 0.12 + 0.04 * n;
+      // midline
+      if (Math.abs(x - cx) < 1.4 && Math.abs(ny) > 0.55) g *= 0.3;
+      if (r > 0.97) g *= (1 - r) * 30;
+      g = Math.max(0, Math.min(1, g + 0.035 * (hash(x, y) - 0.5)));
+    }
+    let R = g * 255, G = g * 255, B = g * 255;
+    if (r < 1) {
+      const tr = Math.hypot(x - tx, y - ty) + 14 * (fbm(x * 0.03 + 9, y * 0.03) - 0.5);
+      const blend = (c, a) => { R = R * (1 - a) + c[0] * a; G = G * (1 - a) + c[1] * a; B = B * (1 - a) + c[2] * a; };
+      if (tr < 74) blend([47, 168, 79], 0.42);
+      if (tr < 38 && tr > 26) blend([224, 51, 43], 0.75);
+      else if (tr <= 26) blend([242, 194, 0], 0.6);
+    }
+    d[i] = R; d[i + 1] = G; d[i + 2] = B; d[i + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  ctx.fillStyle = '#fff'; ctx.font = '700 16px sans-serif'; ctx.textBaseline = 'middle';
+  ctx.fillText('R', 12, H / 2); ctx.fillText('L', W - 24, H / 2);
+  return off;
+}
+const SLICE = buildSlice();
+function drawMRI() {
+  const c = $('#mri-canvas'), r = c.getBoundingClientRect(); if (!r.width) return;
+  const dpr = window.devicePixelRatio || 1;
+  c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  const s = Math.min(c.width / SLICE.width, c.height / SLICE.height) * 0.92;
+  const w = SLICE.width * s, h = SLICE.height * s;
+  ctx.drawImage(SLICE, (c.width - w) / 2, (c.height - h) / 2, w, h);
+}
+new ResizeObserver(drawMRI).observe($('#mri-panel'));
+
+/* ---------- Placeholder 3D (shapes stand in for model.glb) ---------- */
+function make3D() {
+  if (!window.THREE) return;
+  const host = $('#three');
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  host.appendChild(renderer.domElement);
+  renderer.domElement.style.cssText = 'width:100%;height:100%;display:block';
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+  camera.position.set(0, 0.2, 7.2);
+  scene.add(new THREE.HemisphereLight(0xE8F4F2, 0x0A1413, 0.75));
+  const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(3, 5, 4); scene.add(key);
+  const rim = new THREE.DirectionalLight(0x7FE9DA, 0.6); rim.position.set(-4, 2, -5); scene.add(rim);
+  const col = (hex) => new THREE.Color(hex).convertSRGBToLinear();
+  const blob = (r, detail, amp, seed) => {
+    const g = new THREE.SphereGeometry(r, 24 * detail, 16 * detail), p = g.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i); const n = v.clone().normalize();
+      const k = amp * (Math.sin(5 * n.x + seed) * Math.sin(6 * n.y + 2 * seed) * Math.sin(5 * n.z + seed) + 0.5 * Math.sin(13 * n.x + seed) * Math.sin(11 * n.y) * Math.sin(12 * n.z + 3));
+      v.addScaledVector(n, k * r); p.setXYZ(i, v.x, v.y, v.z);
+    }
+    g.computeVertexNormals(); return g;
+  };
+  const model = new THREE.Group(); scene.add(model);
+  // Brain: fresnel "glass shell" so the tumor reads through it (same shader as in the v4 prompt)
+  const brainMat = new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color('#C9D2DA') }, uBase: { value: 0.04 }, uRim: { value: 0.6 }, uPower: { value: 2.2 } },
+    vertexShader: 'varying vec3 vN; varying vec3 vV; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }',
+    fragmentShader: 'uniform vec3 uColor; uniform float uBase; uniform float uRim; uniform float uPower; varying vec3 vN; varying vec3 vV; void main() { float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uPower); gl_FragColor = vec4(uColor, uBase + uRim * f); }',
+    transparent: true, depthWrite: false,
+  });
+  const brain = new THREE.Mesh(blob(1.6, 5, 0.05, 1), brainMat);
+  brain.scale.set(1, 0.82, 1.18); brain.renderOrder = 2;
+  const c0 = new THREE.Vector3(-0.62, 0.36, 0.5);
+  const mat = (hex, e) => new THREE.MeshStandardMaterial({ color: col(hex), roughness: 0.42, metalness: 0, emissive: col(hex), emissiveIntensity: e });
+  const edema = new THREE.Mesh(blob(0.66, 4, 0.14, 4), Object.assign(mat('#2FA84F', 0.08), {}));
+  edema.material.transparent = true; edema.material.opacity = 0.35; edema.material.depthWrite = false; edema.renderOrder = 1;
+  const enh = new THREE.Mesh(blob(0.38, 4, 0.1, 7), mat('#E0332B', 0.15));
+  const core = new THREE.Mesh(blob(0.22, 3, 0.08, 2), mat('#F2C200', 0.08));
+  [edema, enh, core].forEach(m => { m.position.copy(c0); });
+  model.add(brain, edema, enh, core);
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true; controls.enablePan = false; controls.saveState();
+  const D = Math.PI / 180, target = new THREE.Euler(15 * D, -35 * D, 0);
+  const fit = () => {
+    const w = host.clientWidth, h = host.clientHeight; if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h;
+    // fit: keep the whole model (bounding radius R) inside the narrower of the two FOVs, 18% margin
+    const R = 1.6 * 1.18, vf = camera.fov * D / 2, hf = Math.atan(Math.tan(vf) * camera.aspect);
+    const dist = (R * 1.18) / Math.sin(Math.min(vf, hf));
+    camera.position.setLength(dist); camera.updateProjectionMatrix(); controls.saveState();
+  };
+  new ResizeObserver(fit).observe(host); fit();
+  (function loop() {
+    model.rotation.x += (target.x - model.rotation.x) * 0.12;
+    model.rotation.y += (target.y - model.rotation.y) * 0.12;
+    controls.update(); renderer.render(scene, camera); requestAnimationFrame(loop);
+  })();
+  window.model3d = {
+    apply(s) {
+      const r = s.rot || [15, -35];
+      target.set(r[0] * D, r[1] * D, 0);
+      edema.visible = !s.edemaOff;
+    },
+  };
+}
+make3D();
+
+/* ---------- Voice trace (monitor-style sweep) ---------- */
+const VOICE = {
+  offline:    { main: 'Tap to connect', sub: 'CorteX is offline', color: '#788C89', alpha: 1 },
+  connecting: { main: 'Connecting', sub: '', color: '#FFB648', alpha: 1 },
+  idle:       { main: 'Hold Space to talk', sub: 'or hold the trace', color: '#3FD8C2', alpha: 0.55 },
+  talking:    { main: 'Listening', sub: 'Release to send', color: '#3FD8C2', alpha: 1 },
+  thinking:   { main: 'Thinking', sub: '', color: '#3FD8C2', alpha: 0.8 },
+  speaking:   { main: 'Speaking', sub: 'Hold Space to interrupt', color: '#3FD8C2', alpha: 1 },
+};
+let voiceState = 'idle';
+function setVoice(v) {
+  voiceState = v;
+  $('#voice-trace').dataset.state = v;
+  $('#vs-main').textContent = VOICE[v].main;
+  $('#vs-sub').textContent = VOICE[v].sub;
+  $('#vs-disc').style.display = v === 'offline' ? 'none' : '';
+  $('#status').dataset.state = v === 'offline' ? 'offline' : v === 'connecting' ? 'connecting' : 'live';
+  $('#status b').textContent = v === 'offline' ? 'Offline' : v === 'connecting' ? 'Connecting' : 'Live';
+  document.querySelectorAll('.ref-bar [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+}
+function pulse(t, period, width) { const p = (t % period) / period; return Math.exp(-((p - 0.5) ** 2) / (2 * width * width)); }
+function signal(t, v, level) {
+  const n = Math.sin(t * 71) * 0.5 + Math.sin(t * 113) * 0.5;
+  switch (v) {
+    case 'offline': return 0;
+    case 'connecting': return 0.28 * pulse(t, 1, 0.03);
+    case 'idle': { const p = (t % 2.4) / 2.4; return p > 0.46 && p < 0.54 ? 0.42 * Math.sin((p - 0.46) / 0.08 * Math.PI * 2) : 0.015 * n; }
+    case 'talking': return level * Math.sin(t * 2 * Math.PI * 11 + 2 * n) * (0.55 + 0.45 * Math.sin(t * 2 * Math.PI * 1.3));
+    case 'thinking': return 0.14 * Math.sin(t * 2 * Math.PI * 0.9);
+    case 'speaking': { const env = Math.pow(Math.max(0, Math.sin(t * 2 * Math.PI * 2.6)), 0.6) * (0.7 + 0.3 * Math.sin(t * 2 * Math.PI * 0.7)); return 0.62 * env * Math.sin(t * 2 * Math.PI * 9 + 3 * Math.sin(t * 2 * Math.PI * 2)); }
+  }
+  return 0;
+}
+(function trace() {
+  const c = $('#trace'), ctx = c.getContext('2d');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let x = 0, prevY = null, last = performance.now(), w = 0, h = 0, dpr = 1;
+  const fit = () => {
+    const r = c.getBoundingClientRect(); dpr = window.devicePixelRatio || 1;
+    w = r.width; h = r.height; c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); x = 0; prevY = null;
+  };
+  new ResizeObserver(fit).observe(c); fit();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    const cfg = VOICE[voiceState];
+    const level = 0.55 + 0.35 * Math.sin(now / 230) * Math.sin(now / 97);
+    ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.strokeStyle = cfg.color; ctx.globalAlpha = cfg.alpha;
+    ctx.shadowColor = cfg.color; ctx.shadowBlur = (voiceState === 'talking' || voiceState === 'speaking') ? 8 : 0;
+    if (reduce) {
+      ctx.clearRect(0, 0, w, h); ctx.beginPath();
+      for (let i = 0; i <= w; i += 2) { const y = h / 2 - signal(i / 140, voiceState, 0.6) * h * 0.38; i ? ctx.lineTo(i, y) : ctx.moveTo(i, y); }
+      ctx.stroke(); return;
+    }
+    const steps = Math.max(1, Math.round(140 * dt));
+    for (let k = 0; k < steps; k++) {
+      x += 1;
+      if (x > w) { x = 0; prevY = null; }
+      ctx.clearRect(x, 0, 22, h);
+      const t = now / 1000 - (steps - k) / 140;
+      const y = h / 2 - signal(t, voiceState, level) * h * 0.38;
+      if (prevY !== null) { ctx.beginPath(); ctx.moveTo(x - 1, prevY); ctx.lineTo(x, y); ctx.stroke(); }
+      prevY = y;
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ---------- Reference switcher ---------- */
+document.querySelectorAll('.ref-bar [data-s]').forEach(b => b.onclick = () => setState(b.dataset.s));
+document.querySelectorAll('.ref-bar [data-v]').forEach(b => b.onclick = () => setVoice(b.dataset.v));
+const q = new URLSearchParams(location.search);
+if (q.has('shot')) document.body.classList.remove('ref');
+setState(q.get('state') || 'initial');
+setVoice(q.get('voice') || 'idle');
+</script>
+</body>
+</html>
